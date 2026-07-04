@@ -5,6 +5,11 @@ import { RiTBoxLine } from "@remixicon/react";
 import clsx from "classnames";
 import { debounce } from "es-toolkit";
 
+import {
+  connectLiveDanmaku,
+  type LiveDanmakuConnection,
+  type LiveDanmakuLine,
+} from "@/service/live-danmaku";
 import type { WebPlayerParams } from "@/service/web-player";
 
 import { usePlayList } from "@/store/play-list";
@@ -30,20 +35,26 @@ const timeTagPattern = /\[(\d{1,2}):(\d{1,2})(?:\.(\d{1,3}))?\]/g;
 
 const DEFAULT_FONT_SIZE = 20;
 const DEFAULT_OFFSET = 0;
+const LIVE_DANMAKU_LIMIT = 80;
 
 const Lyrics = ({ color, centered, showControls }: { color?: string; centered?: boolean; showControls?: boolean }) => {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const rafIdRef = useRef<number | null>(null);
   const lineRefs = useRef<Record<number, HTMLDivElement | null>>({});
+  const liveConnectionRef = useRef<LiveDanmakuConnection | null>(null);
   const [centerPadding, setCenterPadding] = useState(0);
   const playId = usePlayList(s => s.playId);
+  const playItem = usePlayList(s => s.list.find(item => item.id === s.playId));
   const [lyrics, setLyrics] = useState<LyricLine[]>([]);
   const [translatedLyrics, setTranslatedLyrics] = useState<LyricLine[]>([]);
+  const [liveLines, setLiveLines] = useState<LiveDanmakuLine[]>([]);
+  const [liveStatus, setLiveStatus] = useState<"connecting" | "connected" | "error">("connecting");
   const [offset, setOffset] = useState<number>(DEFAULT_OFFSET);
   const [fontSize, setFontSize] = useState<number>(DEFAULT_FONT_SIZE);
   const [isLoading, setIsLoading] = useState(false);
   const { currentTime } = usePlayProgress();
   const currentMs = currentTime * 1000 + offset;
+  const isLiveLyrics = playItem?.type === "live" && Boolean(playItem.roomId);
 
   const {
     isOpen: isSearchOpen,
@@ -95,6 +106,15 @@ const Lyrics = ({ color, centered, showControls }: { color?: string; centered?: 
     let canceled = false;
     setOffset(DEFAULT_OFFSET);
     setFontSize(DEFAULT_FONT_SIZE);
+
+    if (isLiveLyrics) {
+      setLyrics([]);
+      setTranslatedLyrics([]);
+      setIsLoading(false);
+      return () => {
+        canceled = true;
+      };
+    }
 
     const playItem = usePlayList.getState().getPlayItem();
     const fetchLyrics = async () => {
@@ -167,7 +187,53 @@ const Lyrics = ({ color, centered, showControls }: { color?: string; centered?: 
     return () => {
       canceled = true;
     };
-  }, [parseLrc, playId, tryLoadCachedLyrics]);
+  }, [isLiveLyrics, parseLrc, playId, tryLoadCachedLyrics]);
+
+  useEffect(() => {
+    liveConnectionRef.current?.close();
+    liveConnectionRef.current = null;
+    setLiveLines([]);
+
+    if (!isLiveLyrics || !playItem?.roomId) {
+      setLiveStatus("connecting");
+      return;
+    }
+
+    let canceled = false;
+    setLiveStatus("connecting");
+
+    void connectLiveDanmaku(playItem.roomId, {
+      onOpen: () => {
+        if (!canceled) setLiveStatus("connected");
+      },
+      onMessage: line => {
+        if (canceled) return;
+        setLiveLines(prev => [...prev, line].slice(-LIVE_DANMAKU_LIMIT));
+      },
+      onError: () => {
+        if (!canceled) setLiveStatus("error");
+      },
+      onClose: () => {
+        if (!canceled) setLiveStatus("error");
+      },
+    })
+      .then(connection => {
+        if (canceled) {
+          connection.close();
+          return;
+        }
+        liveConnectionRef.current = connection;
+      })
+      .catch(() => {
+        if (!canceled) setLiveStatus("error");
+      });
+
+    return () => {
+      canceled = true;
+      liveConnectionRef.current?.close();
+      liveConnectionRef.current = null;
+    };
+  }, [isLiveLyrics, playItem?.roomId]);
 
   const translationMap = useMemo(() => {
     if (!translatedLyrics?.length) return new Map<number, string>();
@@ -179,12 +245,13 @@ const Lyrics = ({ color, centered, showControls }: { color?: string; centered?: 
   }, [translatedLyrics]);
 
   const activeIndex = useMemo(() => {
+    if (isLiveLyrics) return liveLines.length - 1;
     if (!lyrics.length) return -1;
     for (let i = lyrics.length - 1; i >= 0; i -= 1) {
       if (currentMs >= lyrics[i].time) return i;
     }
     return 0;
-  }, [currentMs, lyrics]);
+  }, [currentMs, isLiveLyrics, liveLines.length, lyrics]);
 
   const persistLyricsCache = useMemo(
     () =>
@@ -286,7 +353,7 @@ const Lyrics = ({ color, centered, showControls }: { color?: string; centered?: 
 
   useEffect(() => {
     updateCenterPadding();
-  }, [updateCenterPadding, fontSize, lyrics.length]);
+  }, [updateCenterPadding, fontSize, isLiveLyrics, liveLines.length, lyrics.length]);
 
   useEffect(() => {
     return () => {
@@ -347,6 +414,47 @@ const Lyrics = ({ color, centered, showControls }: { color?: string; centered?: 
     );
   };
 
+  const renderLiveLine = (line: LiveDanmakuLine, index: number) => {
+    const isActive = index === activeIndex;
+    const isSuperChat = line.type === "super_chat";
+
+    return (
+      <div
+        key={line.id}
+        ref={node => {
+          lineRefs.current[index] = node;
+        }}
+        className={clsx(
+          "w-full transform-none py-2 transition-all duration-300 ease-out",
+          centered ? "text-center" : "text-left",
+          isActive ? "opacity-100" : "opacity-65",
+        )}
+        style={{ fontSize: isActive ? fontSize * 1.25 : fontSize, transform: "none" }}
+      >
+        <div className="flex flex-wrap items-baseline gap-2 leading-snug break-words whitespace-pre-wrap">
+          {isSuperChat && (
+            <span className="rounded bg-amber-400 px-1.5 py-0.5 text-xs font-bold text-black">
+              SC{line.price ? ` ¥${line.price}` : ""}
+            </span>
+          )}
+          <span className={clsx("font-semibold", isActive ? activeTextBase : "")} style={{ color: color || undefined }}>
+            {line.username}
+          </span>
+          <span className={clsx(isSuperChat ? "font-bold text-amber-100" : "", isActive ? activeTextBase : "")}>
+            {line.text}
+          </span>
+        </div>
+      </div>
+    );
+  };
+
+  const renderEmptyText = () => {
+    if (!isLiveLyrics) return isLoading ? "歌词加载中..." : "暂无歌词";
+    if (liveStatus === "connecting") return "弹幕连接中...";
+    if (liveStatus === "error") return "弹幕连接失败";
+    return "等待弹幕中...";
+  };
+
   return (
     <>
       <div className="group/lyrics relative flex h-full w-full items-center justify-center overflow-hidden">
@@ -360,7 +468,17 @@ const Lyrics = ({ color, centered, showControls }: { color?: string; centered?: 
               "linear-gradient(to bottom, transparent 0%, rgba(0,0,0,0.15) 6%, rgba(0,0,0,0.5) 12%, black 24%, black 76%, rgba(0,0,0,0.5) 88%, rgba(0,0,0,0.15) 94%, transparent 100%)",
           }}
         >
-          {lyrics.length ? (
+          {isLiveLyrics && liveLines.length ? (
+            <div
+              className="space-y-2"
+              style={{
+                paddingTop: centerPadding,
+                paddingBottom: centerPadding,
+              }}
+            >
+              {liveLines.map((line, index) => renderLiveLine(line, index))}
+            </div>
+          ) : !isLiveLyrics && lyrics.length ? (
             <div
               className="space-y-2"
               style={{
@@ -372,12 +490,12 @@ const Lyrics = ({ color, centered, showControls }: { color?: string; centered?: 
             </div>
           ) : (
             <div className="text-foreground/70 flex h-full items-center justify-center">
-              {isLoading ? "歌词加载中..." : "暂无歌词"}
+              {renderEmptyText()}
             </div>
           )}
         </div>
 
-        {showControls && (
+        {showControls && !isLiveLyrics && (
           <div className="text-foreground/80 pointer-events-none absolute right-6 bottom-6 flex flex-col items-center space-y-3 text-sm transition-opacity duration-200">
             <div className="pointer-events-auto">
               <FontSizeControl value={fontSize} onChange={handleFontSizeChange} onOpenChange={() => {}} />
