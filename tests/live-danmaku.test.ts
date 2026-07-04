@@ -1,6 +1,7 @@
 import { describe, expect, test } from "vitest";
 
 import { normalizeDanmakuMessage, normalizeSuperChatMessage } from "@/service/live-danmaku";
+import { mergeLiveDanmakuLine } from "@shared/live";
 
 describe("live danmaku service", () => {
   test("normalizes DANMU_MSG", () => {
@@ -55,5 +56,18 @@ describe("live danmaku service", () => {
         data: { message: " ", user_info: { uname: "sc-user" } },
       } as any),
     ).toBeUndefined();
+  });
+
+  test("folds repeated messages and trims max lines", () => {
+    const settings = { duplicateWindowSeconds: 10, maxLines: 2 };
+    const first = { id: "1", type: "danmaku" as const, username: "a", text: "same", time: 1000 };
+    const repeated = { id: "2", type: "danmaku" as const, username: "b", text: "same", time: 2000 };
+    const other = { id: "3", type: "danmaku" as const, username: "c", text: "other", time: 3000 };
+
+    const folded = mergeLiveDanmakuLine([first], repeated, settings);
+    expect(folded).toMatchObject([{ id: "2", text: "same", repeatCount: 2 }]);
+
+    const trimmed = mergeLiveDanmakuLine(folded, other, { duplicateWindowSeconds: 0, maxLines: 1 });
+    expect(trimmed).toEqual([other]);
   });
 });

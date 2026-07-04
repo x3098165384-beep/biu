@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, test, vi } from "vitest";
 
 import { getLiveAudioPlayUrl, parseLiveRoomInput } from "@/service/live-room";
+import { extractLiveAudioCandidates } from "@shared/live";
 import { liveRequest } from "@/service/request";
 
 vi.mock("@/service/request", () => ({
@@ -93,5 +94,34 @@ describe("live-room service", () => {
       format: "fmp4",
       codec: "avc",
     });
+  });
+
+  test("extractLiveAudioCandidates keeps every hls cdn host for fallback", () => {
+    const candidates = extractLiveAudioCandidates([
+      {
+        protocol_name: "http_hls",
+        format: [
+          {
+            format_name: "fmp4",
+            codec: [
+              {
+                codec_name: "avc",
+                current_qn: 10000,
+                base_url: "/live/index.m3u8?",
+                url_info: [
+                  { host: "https://cdn-a.test", extra: "sig=a" },
+                  { host: "https://cdn-b.test", extra: "sig=b" },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+    ]);
+
+    expect(candidates.map(item => item.audioUrl)).toEqual([
+      "https://cdn-a.test/live/index.m3u8?sig=a",
+      "https://cdn-b.test/live/index.m3u8?sig=b",
+    ]);
   });
 });

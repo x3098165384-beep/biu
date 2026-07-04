@@ -37,6 +37,13 @@ export const channel = {
     getNeteaseLyrics: "lyrics:netease-lyrics",
     searchLrclib: "lyrics:lrclib-search",
   },
+  live: {
+    getAudioPlayUrls: "live:get-audio-play-urls",
+    danmakuSubscribe: "live:danmaku-subscribe",
+    danmakuClose: "live:danmaku-close",
+    danmakuMessage: "live:danmaku-message",
+    danmakuStatus: "live:danmaku-status",
+  },
   router: {
     navigate: "router:navigate",
   },

@@ -21,6 +21,19 @@ const api: ElectronAPI = {
   searchNeteaseSongs: params => ipcRenderer.invoke(channel.lyrics.searchNeteaseSongs, params),
   getNeteaseLyrics: params => ipcRenderer.invoke(channel.lyrics.getNeteaseLyrics, params),
   searchLrclibLyrics: params => ipcRenderer.invoke(channel.lyrics.searchLrclib, params),
+  getLiveAudioPlayUrls: roomId => ipcRenderer.invoke(channel.live.getAudioPlayUrls, roomId),
+  subscribeLiveDanmaku: roomId => ipcRenderer.invoke(channel.live.danmakuSubscribe, roomId),
+  closeLiveDanmaku: () => ipcRenderer.invoke(channel.live.danmakuClose),
+  onLiveDanmakuMessage: cb => {
+    const handler = (_: Electron.IpcRendererEvent, line: LiveDanmakuLine) => cb(line);
+    ipcRenderer.on(channel.live.danmakuMessage, handler);
+    return () => ipcRenderer.removeListener(channel.live.danmakuMessage, handler);
+  },
+  onLiveDanmakuStatus: cb => {
+    const handler = (_: Electron.IpcRendererEvent, payload: LiveDanmakuStatusPayload) => cb(payload);
+    ipcRenderer.on(channel.live.danmakuStatus, handler);
+    return () => ipcRenderer.removeListener(channel.live.danmakuStatus, handler);
+  },
   setProxySettings: proxySettings => ipcRenderer.invoke(channel.app.setProxySettings, proxySettings),
   scanLocalMusic: dirs => ipcRenderer.invoke(channel.localMusic.scan, dirs),
   deleteLocalMusicFile: filePath => ipcRenderer.invoke(channel.localMusic.deleteFile, filePath),

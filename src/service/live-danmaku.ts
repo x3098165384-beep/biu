@@ -1,15 +1,8 @@
-import { BilibiliApiClient, LiveWS, parseLiveConfig, type MessageData } from "bilibili-live-danmaku";
+import { type MessageData } from "bilibili-live-danmaku";
 
-export type LiveDanmakuLineType = "danmaku" | "super_chat";
+import type { LiveDanmakuLine, LiveDanmakuLineType } from "@shared/live";
 
-export interface LiveDanmakuLine {
-  id: string;
-  type: LiveDanmakuLineType;
-  username: string;
-  text: string;
-  price?: number;
-  time: number;
-}
+export type { LiveDanmakuLine };
 
 export interface LiveDanmakuHandlers {
   onOpen?: () => void;
@@ -61,37 +54,26 @@ export const connectLiveDanmaku = async (
   roomId: number,
   { onOpen, onMessage, onError, onClose }: LiveDanmakuHandlers,
 ): Promise<LiveDanmakuConnection> => {
-  const client = new BilibiliApiClient();
-  const res = await client.xliveGetDanmuInfo({ id: roomId });
-  const config = parseLiveConfig(res.data);
-  const live = new LiveWS(roomId, config);
+  const removeMessageListener = window.electron.onLiveDanmakuMessage(onMessage || (() => {}));
+  const removeStatusListener = window.electron.onLiveDanmakuStatus(payload => {
+    if (payload.status === "connected") {
+      onOpen?.();
+      return;
+    }
+    if (payload.status === "error") {
+      onError?.(new Event("error"));
+      return;
+    }
+    onClose?.();
+  });
 
-  const handleOpen = () => onOpen?.();
-  const handleError = (event: Event) => onError?.(event);
-  const handleClose = () => onClose?.();
-  const handleDanmaku = ({ data }: { data: MessageData.DANMU_MSG }) => {
-    const line = normalizeDanmakuMessage(data);
-    if (line) onMessage?.(line);
-  };
-  const handleSuperChat = ({ data }: { data: MessageData.SUPER_CHAT_MESSAGE }) => {
-    const line = normalizeSuperChatMessage(data);
-    if (line) onMessage?.(line);
-  };
-
-  live.addEventListener("CONNECT_SUCCESS", handleOpen);
-  live.addEventListener("DANMU_MSG", handleDanmaku);
-  live.addEventListener("SUPER_CHAT_MESSAGE", handleSuperChat);
-  live.addEventListener("error", handleError);
-  live.addEventListener("close", handleClose);
+  await window.electron.subscribeLiveDanmaku(roomId);
 
   return {
     close: () => {
-      live.removeEventListener("CONNECT_SUCCESS", handleOpen);
-      live.removeEventListener("DANMU_MSG", handleDanmaku);
-      live.removeEventListener("SUPER_CHAT_MESSAGE", handleSuperChat);
-      live.removeEventListener("error", handleError);
-      live.removeEventListener("close", handleClose);
-      live.close();
+      removeMessageListener();
+      removeStatusListener();
+      void window.electron.closeLiveDanmaku();
     },
   };
 };

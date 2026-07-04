@@ -13,6 +13,41 @@ declare global {
     createdTime?: number;
   }
 
+  interface LiveAudioCandidate {
+    id: string;
+    audioUrl: string;
+    proxiedUrl?: string;
+    format: string;
+    codec: string;
+    quality: number;
+    host: string;
+    priority: number;
+    available?: boolean;
+  }
+
+  interface LiveAudioPlayUrls {
+    roomId: number;
+    audioUrl: string;
+    candidates: LiveAudioCandidate[];
+  }
+
+  type LiveDanmakuLineType = "danmaku" | "super_chat";
+
+  interface LiveDanmakuLine {
+    id: string;
+    type: LiveDanmakuLineType;
+    username: string;
+    text: string;
+    price?: number;
+    time: number;
+    repeatCount?: number;
+  }
+
+  interface LiveDanmakuStatusPayload {
+    status: "connected" | "closed" | "error";
+    message?: string;
+  }
+
   interface ElectronAPI {
     /** 获取指定name的存储值 */
     getStore: <N extends StoreName>(name: N) => Promise<StoreDataMap[N] | undefined>;
@@ -44,6 +79,16 @@ declare global {
     getNeteaseLyrics: (params: GetLyricsByNeteaseParams) => Promise<GetLyricsByNeteaseResponse>;
     /** 在 LrcLib 搜索歌曲/歌词 */
     searchLrclibLyrics: (params: SearchSongByLrclibParams) => Promise<SearchSongByLrclibResponse[]>;
+    /** 获取直播 HLS 候选源 */
+    getLiveAudioPlayUrls: (roomId: number) => Promise<LiveAudioPlayUrls>;
+    /** 订阅直播弹幕 */
+    subscribeLiveDanmaku: (roomId: number) => Promise<void>;
+    /** 关闭直播弹幕 */
+    closeLiveDanmaku: () => Promise<void>;
+    /** 监听直播弹幕消息 */
+    onLiveDanmakuMessage: (cb: (line: LiveDanmakuLine) => void) => VoidFunction;
+    /** 监听直播弹幕连接状态 */
+    onLiveDanmakuStatus: (cb: (payload: LiveDanmakuStatusPayload) => void) => VoidFunction;
     /** 获取当前应用平台：macos | windows | linux */
     getPlatform: () => AppPlatForm;
     /** 更新网络代理设置 */

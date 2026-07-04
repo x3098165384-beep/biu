@@ -1,10 +1,14 @@
 import { liveRequest } from "./request";
+import {
+  extractLiveAudioCandidates,
+  getLiveStatusMessage,
+  LiveStatus,
+  type LiveAudioCandidate,
+  type LiveAudioPlayUrls,
+  type LiveStream,
+} from "@shared/live";
 
-export enum LiveStatus {
-  Offline = 0,
-  Live = 1,
-  Round = 2,
-}
+export { LiveStatus };
 
 interface LiveRoomInitData {
   room_id: number;
@@ -47,28 +51,6 @@ interface LiveRoomBaseInfoResponse {
   };
 }
 
-interface LiveUrlInfo {
-  host: string;
-  extra: string;
-}
-
-interface LiveCodec {
-  codec_name: string;
-  current_qn: number;
-  base_url: string;
-  url_info?: LiveUrlInfo[];
-}
-
-interface LiveFormat {
-  format_name: string;
-  codec?: LiveCodec[];
-}
-
-interface LiveStream {
-  protocol_name: string;
-  format?: LiveFormat[];
-}
-
 interface LiveRoomPlayInfoResponse {
   code: number;
   message?: string;
@@ -85,21 +67,11 @@ interface LiveRoomPlayInfoResponse {
 
 export interface LiveAudioPlayUrl {
   audioUrl: string;
+  candidates?: LiveAudioCandidate[];
   format: string;
   codec: string;
   quality: number;
 }
-
-interface LiveAudioCandidate {
-  format: string;
-  codec: string;
-  quality: number;
-  baseUrl: string;
-  urlInfo: LiveUrlInfo;
-}
-
-const formatPriority = ["fmp4", "ts"];
-const codecPriority = ["avc", "hevc"];
 
 export const parseLiveRoomInput = (input: string) => {
   const trimmed = input.trim();
@@ -130,12 +102,6 @@ const assertRoomPlayable = (room: LiveRoomInitData) => {
   if (room.room_shield) {
     throw new Error("直播间当前不可播放");
   }
-};
-
-const getLiveStatusMessage = (status?: LiveStatus) => {
-  if (status === LiveStatus.Offline) return "主播未开播";
-  if (status === LiveStatus.Round) return "直播间正在轮播，暂不作为直播音频播放";
-  return "直播间当前不可播放";
 };
 
 export const getLiveRoomInit = async (roomId: number) => {
@@ -185,7 +151,11 @@ export const getLiveRoomInfo = async (roomId: number) => {
   };
 };
 
-export const getLiveAudioPlayUrl = async (roomId: number): Promise<LiveAudioPlayUrl> => {
+export const getLiveAudioPlayUrls = async (roomId: number): Promise<LiveAudioPlayUrls> => {
+  if (typeof window !== "undefined" && window.electron?.getLiveAudioPlayUrls) {
+    return window.electron.getLiveAudioPlayUrls(roomId);
+  }
+
   const response = await liveRequest.get<LiveRoomPlayInfoResponse>("/xlive/web-room/v2/index/getRoomPlayInfo", {
     params: {
       room_id: roomId,
@@ -205,45 +175,30 @@ export const getLiveAudioPlayUrl = async (roomId: number): Promise<LiveAudioPlay
     throw new Error(getLiveStatusMessage(response.data?.live_status));
   }
 
-  const candidates =
-    response.data.playurl_info?.playurl?.stream
-      ?.filter(stream => stream.protocol_name === "http_hls")
-      .flatMap(stream =>
-        stream.format?.flatMap(format =>
-          format.codec?.map(codec => ({
-            format: format.format_name,
-            codec: codec.codec_name,
-            quality: codec.current_qn,
-            baseUrl: codec.base_url,
-            urlInfo: codec.url_info?.[0],
-          })),
-        ),
-      )
-      .filter((candidate): candidate is LiveAudioCandidate => Boolean(candidate?.urlInfo?.host && candidate.baseUrl)) ??
-    [];
+  const candidates = extractLiveAudioCandidates(response.data.playurl_info?.playurl?.stream);
+  const selected = candidates[0];
 
-  const selected = candidates.toSorted((a, b) => {
-    const formatA = formatPriority.indexOf(a.format);
-    const formatB = formatPriority.indexOf(b.format);
-    if (formatA !== formatB)
-      return (
-        (formatA === -1 ? Number.MAX_SAFE_INTEGER : formatA) - (formatB === -1 ? Number.MAX_SAFE_INTEGER : formatB)
-      );
-
-    const codecA = codecPriority.indexOf(a.codec);
-    const codecB = codecPriority.indexOf(b.codec);
-    if (codecA !== codecB)
-      return (codecA === -1 ? Number.MAX_SAFE_INTEGER : codecA) - (codecB === -1 ? Number.MAX_SAFE_INTEGER : codecB);
-
-    return b.quality - a.quality;
-  })[0];
-
-  if (!selected?.urlInfo) {
+  if (!selected) {
     throw new Error("没有可播放的直播音频流");
   }
 
   return {
-    audioUrl: `${selected.urlInfo.host}${selected.baseUrl}${selected.urlInfo.extra}`,
+    roomId,
+    audioUrl: selected.proxiedUrl || selected.audioUrl,
+    candidates,
+  };
+};
+
+export const getLiveAudioPlayUrl = async (roomId: number): Promise<LiveAudioPlayUrl> => {
+  const data = await getLiveAudioPlayUrls(roomId);
+  const selected = data.candidates[0];
+  if (!selected) {
+    throw new Error("没有可播放的直播音频流");
+  }
+
+  return {
+    audioUrl: selected.proxiedUrl || selected.audioUrl || data.audioUrl,
+    candidates: data.candidates,
     format: selected.format,
     codec: selected.codec,
     quality: selected.quality,

@@ -5,13 +5,16 @@ import { RiTBoxLine } from "@remixicon/react";
 import clsx from "classnames";
 import { debounce } from "es-toolkit";
 
+import { connectLiveDanmaku, type LiveDanmakuConnection, type LiveDanmakuLine } from "@/service/live-danmaku";
 import {
-  connectLiveDanmaku,
-  type LiveDanmakuConnection,
-  type LiveDanmakuLine,
-} from "@/service/live-danmaku";
+  defaultLiveDanmakuSettings,
+  mergeLiveDanmakuLine,
+  splitBlockedKeywords,
+  type LiveDanmakuSettings,
+} from "@shared/live";
 import type { WebPlayerParams } from "@/service/web-player";
 
+import { useFullScreenPlayerSettings } from "@/store/full-screen-player-settings";
 import { usePlayList } from "@/store/play-list";
 import { usePlayProgress } from "@/store/play-progress";
 import { StoreNameMap } from "@shared/store";
@@ -35,26 +38,32 @@ const timeTagPattern = /\[(\d{1,2}):(\d{1,2})(?:\.(\d{1,3}))?\]/g;
 
 const DEFAULT_FONT_SIZE = 20;
 const DEFAULT_OFFSET = 0;
-const LIVE_DANMAKU_LIMIT = 80;
 
 const Lyrics = ({ color, centered, showControls }: { color?: string; centered?: boolean; showControls?: boolean }) => {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const rafIdRef = useRef<number | null>(null);
   const lineRefs = useRef<Record<number, HTMLDivElement | null>>({});
   const liveConnectionRef = useRef<LiveDanmakuConnection | null>(null);
+  const liveRateLimitRef = useRef({ second: 0, count: 0 });
+  const liveDanmakuSettingsRef = useRef<LiveDanmakuSettings>(defaultLiveDanmakuSettings);
   const [centerPadding, setCenterPadding] = useState(0);
   const playId = usePlayList(s => s.playId);
   const playItem = usePlayList(s => s.list.find(item => item.id === s.playId));
+  const liveDanmakuSettings = useFullScreenPlayerSettings(s => s.liveDanmaku || defaultLiveDanmakuSettings);
   const [lyrics, setLyrics] = useState<LyricLine[]>([]);
   const [translatedLyrics, setTranslatedLyrics] = useState<LyricLine[]>([]);
   const [liveLines, setLiveLines] = useState<LiveDanmakuLine[]>([]);
-  const [liveStatus, setLiveStatus] = useState<"connecting" | "connected" | "error">("connecting");
+  const [liveStatus, setLiveStatus] = useState<"disabled" | "connecting" | "connected" | "error">("connecting");
   const [offset, setOffset] = useState<number>(DEFAULT_OFFSET);
   const [fontSize, setFontSize] = useState<number>(DEFAULT_FONT_SIZE);
   const [isLoading, setIsLoading] = useState(false);
   const { currentTime } = usePlayProgress();
   const currentMs = currentTime * 1000 + offset;
   const isLiveLyrics = playItem?.type === "live" && Boolean(playItem.roomId);
+
+  useEffect(() => {
+    liveDanmakuSettingsRef.current = liveDanmakuSettings;
+  }, [liveDanmakuSettings]);
 
   const {
     isOpen: isSearchOpen,
@@ -101,6 +110,44 @@ const Lyrics = ({ color, centered, showControls }: { color?: string; centered?: 
     return store[`${playItem.bvid}-${playItem.cid}`] ?? null;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [playId]);
+
+  const sanitizeLiveDanmakuSettings = useCallback(
+    (settings: LiveDanmakuSettings) => ({
+      ...defaultLiveDanmakuSettings,
+      ...settings,
+      maxLines: Math.min(200, Math.max(20, Number(settings.maxLines) || defaultLiveDanmakuSettings.maxLines)),
+      maxPerSecond: Math.min(30, Math.max(1, Number(settings.maxPerSecond) || defaultLiveDanmakuSettings.maxPerSecond)),
+      duplicateWindowSeconds: Math.min(60, Math.max(0, Number(settings.duplicateWindowSeconds) || 0)),
+    }),
+    [],
+  );
+
+  const processLiveLine = useCallback(
+    (line: LiveDanmakuLine) => {
+      const settings = sanitizeLiveDanmakuSettings(liveDanmakuSettingsRef.current);
+      if (!settings.enabled) return;
+      if (line.type === "super_chat" && !settings.showSuperChat) return;
+
+      const blockedKeywords = splitBlockedKeywords(settings.blockedKeywords);
+      if (blockedKeywords.some(keyword => line.text.includes(keyword) || line.username.includes(keyword))) {
+        return;
+      }
+
+      if (line.type !== "super_chat") {
+        const second = Math.floor(Date.now() / 1000);
+        if (liveRateLimitRef.current.second !== second) {
+          liveRateLimitRef.current = { second, count: 0 };
+        }
+        if (liveRateLimitRef.current.count >= settings.maxPerSecond) {
+          return;
+        }
+        liveRateLimitRef.current.count += 1;
+      }
+
+      setLiveLines(prev => mergeLiveDanmakuLine(prev, line, settings));
+    },
+    [sanitizeLiveDanmakuSettings],
+  );
 
   useEffect(() => {
     let canceled = false;
@@ -199,6 +246,11 @@ const Lyrics = ({ color, centered, showControls }: { color?: string; centered?: 
       return;
     }
 
+    if (!liveDanmakuSettings.enabled) {
+      setLiveStatus("disabled");
+      return;
+    }
+
     let canceled = false;
     setLiveStatus("connecting");
 
@@ -208,7 +260,7 @@ const Lyrics = ({ color, centered, showControls }: { color?: string; centered?: 
       },
       onMessage: line => {
         if (canceled) return;
-        setLiveLines(prev => [...prev, line].slice(-LIVE_DANMAKU_LIMIT));
+        processLiveLine(line);
       },
       onError: () => {
         if (!canceled) setLiveStatus("error");
@@ -233,7 +285,7 @@ const Lyrics = ({ color, centered, showControls }: { color?: string; centered?: 
       liveConnectionRef.current?.close();
       liveConnectionRef.current = null;
     };
-  }, [isLiveLyrics, playItem?.roomId]);
+  }, [isLiveLyrics, liveDanmakuSettings.enabled, playItem?.roomId, processLiveLine]);
 
   const translationMap = useMemo(() => {
     if (!translatedLyrics?.length) return new Map<number, string>();
@@ -437,11 +489,17 @@ const Lyrics = ({ color, centered, showControls }: { color?: string; centered?: 
               SC{line.price ? ` ¥${line.price}` : ""}
             </span>
           )}
-          <span className={clsx("font-semibold", isActive ? activeTextBase : "")} style={{ color: color || undefined }}>
-            {line.username}
-          </span>
+          {liveDanmakuSettings.showUsername && (
+            <span
+              className={clsx("font-semibold", isActive ? activeTextBase : "")}
+              style={{ color: color || undefined }}
+            >
+              {line.username}
+            </span>
+          )}
           <span className={clsx(isSuperChat ? "font-bold text-amber-100" : "", isActive ? activeTextBase : "")}>
             {line.text}
+            {line.repeatCount && line.repeatCount > 1 ? ` x${line.repeatCount}` : ""}
           </span>
         </div>
       </div>
@@ -450,6 +508,7 @@ const Lyrics = ({ color, centered, showControls }: { color?: string; centered?: 
 
   const renderEmptyText = () => {
     if (!isLiveLyrics) return isLoading ? "歌词加载中..." : "暂无歌词";
+    if (liveStatus === "disabled") return "直播弹幕已关闭";
     if (liveStatus === "connecting") return "弹幕连接中...";
     if (liveStatus === "error") return "弹幕连接失败";
     return "等待弹幕中...";
@@ -489,9 +548,7 @@ const Lyrics = ({ color, centered, showControls }: { color?: string; centered?: 
               {lyrics.map((line, index) => renderLine(line, index))}
             </div>
           ) : (
-            <div className="text-foreground/70 flex h-full items-center justify-center">
-              {renderEmptyText()}
-            </div>
+            <div className="text-foreground/70 flex h-full items-center justify-center">{renderEmptyText()}</div>
           )}
         </div>
 

@@ -6,6 +6,7 @@ import { registerDialogHandlers } from "./dialog";
 import { registerDownloadHandlers } from "./download";
 import { registerFontHandlers } from "./font";
 import { registerLocalMusicHandlers } from "./local-music";
+import { registerLiveHandlers } from "./live";
 import { registerLyricsHandlers } from "./lyrics";
 import { registerShortcutHandlers } from "./shortcut";
 import { registerStoreHandlers } from "./store";
@@ -22,4 +23,5 @@ export function registerIpcHandlers(props: IpcHandlerProps) {
   registerShortcutHandlers(props);
   registerLyricsHandlers();
   registerLocalMusicHandlers();
+  registerLiveHandlers();
 }

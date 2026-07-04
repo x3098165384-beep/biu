@@ -26,6 +26,7 @@ const FullScreenPlayerSettingsPanel = ({ isUiVisible = true }: { isUiVisible?: b
     backgroundColor,
     spectrumColor,
     lyricsColor,
+    liveDanmaku,
     update,
   } = useFullScreenPlayerSettings(
     useShallow(s => ({
@@ -36,9 +37,19 @@ const FullScreenPlayerSettingsPanel = ({ isUiVisible = true }: { isUiVisible?: b
       backgroundColor: s.backgroundColor,
       spectrumColor: s.spectrumColor,
       lyricsColor: s.lyricsColor,
+      liveDanmaku: s.liveDanmaku,
       update: s.update,
     })),
   );
+  const isLive = playItem?.type === "live";
+  const updateLiveDanmaku = (patch: Partial<typeof liveDanmaku>) => {
+    update({
+      liveDanmaku: {
+        ...liveDanmaku,
+        ...patch,
+      },
+    });
+  };
 
   const { control, setValue } = useForm({
     defaultValues: {
@@ -147,6 +158,73 @@ const FullScreenPlayerSettingsPanel = ({ isUiVisible = true }: { isUiVisible?: b
               );
             }}
           />
+        </div>
+      )}
+      {values?.showLyrics && isLive && (
+        <div className="border-default/60 space-y-3 border-t pt-4">
+          <div className="flex items-center justify-between">
+            <div className="text-medium mr-6">直播弹幕歌词</div>
+            <Switch isSelected={liveDanmaku.enabled} onValueChange={enabled => updateLiveDanmaku({ enabled })} />
+          </div>
+          {liveDanmaku.enabled && (
+            <>
+              <div className="flex items-center justify-between">
+                <div className="text-medium mr-6">显示用户名</div>
+                <Switch
+                  isSelected={liveDanmaku.showUsername}
+                  onValueChange={showUsername => updateLiveDanmaku({ showUsername })}
+                />
+              </div>
+              <div className="flex items-center justify-between">
+                <div className="text-medium mr-6">显示醒目留言</div>
+                <Switch
+                  isSelected={liveDanmaku.showSuperChat}
+                  onValueChange={showSuperChat => updateLiveDanmaku({ showSuperChat })}
+                />
+              </div>
+              <div className="flex items-center justify-between gap-4">
+                <div className="text-medium">最多行数</div>
+                <input
+                  className="border-default bg-content1 w-20 rounded border px-2 py-1 text-right outline-none"
+                  min={20}
+                  max={200}
+                  type="number"
+                  value={liveDanmaku.maxLines}
+                  onChange={event => updateLiveDanmaku({ maxLines: Number(event.target.value) || 80 })}
+                />
+              </div>
+              <div className="flex items-center justify-between gap-4">
+                <div className="text-medium">每秒弹幕</div>
+                <input
+                  className="border-default bg-content1 w-20 rounded border px-2 py-1 text-right outline-none"
+                  min={1}
+                  max={30}
+                  type="number"
+                  value={liveDanmaku.maxPerSecond}
+                  onChange={event => updateLiveDanmaku({ maxPerSecond: Number(event.target.value) || 8 })}
+                />
+              </div>
+              <div className="flex items-center justify-between gap-4">
+                <div className="text-medium">重复折叠秒数</div>
+                <input
+                  className="border-default bg-content1 w-20 rounded border px-2 py-1 text-right outline-none"
+                  min={0}
+                  max={60}
+                  type="number"
+                  value={liveDanmaku.duplicateWindowSeconds}
+                  onChange={event => updateLiveDanmaku({ duplicateWindowSeconds: Number(event.target.value) || 0 })}
+                />
+              </div>
+              <div className="space-y-2">
+                <div className="text-medium">屏蔽词</div>
+                <textarea
+                  className="border-default bg-content1 min-h-20 w-full resize-none rounded border px-2 py-1 outline-none"
+                  value={liveDanmaku.blockedKeywords}
+                  onChange={event => updateLiveDanmaku({ blockedKeywords: event.target.value })}
+                />
+              </div>
+            </>
+          )}
         </div>
       )}
 

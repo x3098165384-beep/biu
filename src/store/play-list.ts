@@ -16,6 +16,7 @@ import { formatUrlProtocol } from "@/common/utils/url";
 import { getAudioSongInfo } from "@/service/audio-song-info";
 import { getLiveAudioPlayUrl, getLiveRoomInfo, LiveStatus } from "@/service/live-room";
 import { getWebInterfaceView } from "@/service/web-interface-view";
+import type { LiveAudioCandidate } from "@shared/live";
 
 import { usePlayProgress } from "./play-progress";
 
@@ -242,6 +243,8 @@ export const audio = createAudio();
 
 let liveHls: Hls | undefined;
 let isRefreshingLiveStream = false;
+let liveCandidates: LiveAudioCandidate[] = [];
+let liveCandidateIndex = 0;
 
 const isLivePlayItem = (item?: { type?: PlayDataType }) => item?.type === "live";
 
@@ -262,17 +265,57 @@ const updateCurrentLiveUrl = (audioUrl: string) => {
   });
 };
 
+const getCandidateUrl = (candidate: LiveAudioCandidate) => candidate.proxiedUrl || candidate.audioUrl;
+
+const liveCandidateFromUrl = (url: string): LiveAudioCandidate => ({
+  id: url,
+  audioUrl: url,
+  format: "unknown",
+  codec: "unknown",
+  quality: 0,
+  host: "",
+  priority: 0,
+});
+
+const loadLiveCandidates = async (candidates: LiveAudioCandidate[], shouldPlay: boolean, startIndex = 0) => {
+  const normalizedCandidates = candidates.length ? candidates : [];
+  let lastError: unknown;
+
+  for (let i = startIndex; i < normalizedCandidates.length; i += 1) {
+    const candidate = normalizedCandidates[i];
+    try {
+      await loadLiveSource(getCandidateUrl(candidate), shouldPlay);
+      liveCandidates = normalizedCandidates;
+      liveCandidateIndex = i;
+      return candidate;
+    } catch (error) {
+      lastError = error;
+      log.warn("[Live stream candidate failed]", { candidate, error });
+    }
+  }
+
+  throw lastError instanceof Error ? lastError : new Error("直播流加载失败");
+};
+
 const handleLiveHlsFatalError = async (error: ErrorData) => {
   if (!error.fatal || isRefreshingLiveStream) return;
 
   const playItem = usePlayList.getState().getPlayItem?.();
   if (!isLivePlayItem(playItem) || !playItem?.roomId) return;
+  const roomId = playItem.roomId;
 
   isRefreshingLiveStream = true;
   try {
-    const livePlayData = await getLiveAudioPlayUrl(playItem.roomId);
-    await loadLiveSource(livePlayData.audioUrl, !audio.paused);
-    updateCurrentLiveUrl(livePlayData.audioUrl);
+    const nextCandidate = await loadLiveCandidates(liveCandidates, !audio.paused, liveCandidateIndex + 1).catch(
+      async () => {
+        const livePlayData = await getLiveAudioPlayUrl(roomId);
+        return loadLiveCandidates(
+          livePlayData.candidates || [liveCandidateFromUrl(livePlayData.audioUrl)],
+          !audio.paused,
+        );
+      },
+    );
+    updateCurrentLiveUrl(getCandidateUrl(nextCandidate));
   } catch (refreshError) {
     log.error("[Live stream refresh failed]", { error, refreshError, playItem });
     toastError("直播流已断开");
@@ -448,7 +491,7 @@ export const usePlayList = create<State & Action>()(
           }
           return;
         }
-        if (currentPlayItem?.type === "live" && currentPlayItem?.audioUrl) {
+        if (currentPlayItem?.type === "live" && currentPlayItem?.audioUrl && !currentPlayItem.roomId) {
           await loadLiveSource(currentPlayItem.audioUrl, false);
           usePlayProgress.getState().setCurrentTime(0);
           set({ duration: undefined });
@@ -501,12 +544,16 @@ export const usePlayList = create<State & Action>()(
         if (currentPlayItem?.type === "live" && currentPlayItem?.roomId) {
           const livePlayData = await getLiveAudioPlayUrl(currentPlayItem.roomId);
           if (livePlayData?.audioUrl) {
-            await loadLiveSource(livePlayData.audioUrl, false);
+            const candidate = await loadLiveCandidates(
+              livePlayData.candidates || [liveCandidateFromUrl(livePlayData.audioUrl)],
+              false,
+            );
+            const audioUrl = getCandidateUrl(candidate);
             usePlayProgress.getState().setCurrentTime(0);
             set(state => {
               const listItem = state.list.find(item => item.id === state.playId);
               if (listItem) {
-                listItem.audioUrl = livePlayData.audioUrl;
+                listItem.audioUrl = audioUrl;
                 listItem.liveStatus = LiveStatus.Live;
               }
               state.duration = undefined;
@@ -1281,8 +1328,11 @@ async function refreshCurrentAudioSource(): Promise<boolean> {
     if (playItem.type === "live" && playItem.roomId) {
       const livePlayData = await getLiveAudioPlayUrl(playItem.roomId);
       if (livePlayData?.audioUrl) {
-        await loadLiveSource(livePlayData.audioUrl, false);
-        updateCurrentLiveUrl(livePlayData.audioUrl);
+        const candidate = await loadLiveCandidates(
+          livePlayData.candidates || [liveCandidateFromUrl(livePlayData.audioUrl)],
+          false,
+        );
+        updateCurrentLiveUrl(getCandidateUrl(candidate));
         return true;
       }
     }
@@ -1338,7 +1388,7 @@ usePlayList.subscribe(async (state, prevState) => {
         await resetAudioAndPlay(playItem.audioUrl, playItem);
         return;
       }
-      if (playItem?.type === "live" && playItem?.audioUrl && audio.paused) {
+      if (playItem?.type === "live" && playItem?.audioUrl && !playItem.roomId && audio.paused) {
         await resetAudioAndPlay(playItem.audioUrl, playItem);
         updateMediaSession({
           title: playItem.title,
@@ -1468,7 +1518,11 @@ usePlayList.subscribe(async (state, prevState) => {
       if (playItem?.type === "live" && playItem?.roomId) {
         const livePlayData = await getLiveAudioPlayUrl(playItem.roomId);
         if (livePlayData?.audioUrl) {
-          await resetAudioAndPlay(livePlayData.audioUrl, playItem);
+          const candidate = await loadLiveCandidates(
+            livePlayData.candidates || [liveCandidateFromUrl(livePlayData.audioUrl)],
+            true,
+          );
+          const audioUrl = getCandidateUrl(candidate);
 
           updateMediaSession({
             title: playItem.title,
@@ -1476,7 +1530,7 @@ usePlayList.subscribe(async (state, prevState) => {
             cover: playItem.cover,
           });
 
-          updateCurrentLiveUrl(livePlayData.audioUrl);
+          updateCurrentLiveUrl(audioUrl);
         } else {
           log.error("无法获取直播播放链接", {
             type: "live",
