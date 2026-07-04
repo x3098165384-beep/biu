@@ -1,7 +1,7 @@
 import { describe, expect, test } from "vitest";
 
 import { normalizeDanmakuMessage, normalizeSuperChatMessage } from "@/service/live-danmaku";
-import { mergeLiveDanmakuLine } from "@shared/live";
+import { buildLiveDanmakuCandidates, mergeLiveDanmakuLine } from "@shared/live";
 
 describe("live danmaku service", () => {
   test("normalizes DANMU_MSG", () => {
@@ -69,5 +69,27 @@ describe("live danmaku service", () => {
 
     const trimmed = mergeLiveDanmakuLine(folded, other, { duplicateWindowSeconds: 0, maxLines: 1 });
     expect(trimmed).toEqual([other]);
+  });
+
+  test("builds websocket candidates from danmaku host list", () => {
+    const candidates = buildLiveDanmakuCandidates([
+      { host: "a.chat.bilibili.com", wss_port: 2245 },
+      { host: "a.chat.bilibili.com", wss_port: 2245 },
+      { host: "b.chat.bilibili.com", wss_port: 2245 },
+      { host: "skip.chat.bilibili.com" },
+    ]);
+
+    expect(candidates).toEqual([
+      {
+        host: "a.chat.bilibili.com",
+        port: 2245,
+        address: "wss://a.chat.bilibili.com:2245/sub",
+      },
+      {
+        host: "b.chat.bilibili.com",
+        port: 2245,
+        address: "wss://b.chat.bilibili.com:2245/sub",
+      },
+    ]);
   });
 });

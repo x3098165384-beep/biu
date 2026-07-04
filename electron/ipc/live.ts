@@ -5,18 +5,21 @@ import { randomUUID } from "node:crypto";
 import http from "node:http";
 import { URL } from "node:url";
 
-import { BilibiliApiClient, LiveWS, parseLiveConfig, type MessageData } from "bilibili-live-danmaku";
+import { BilibiliApiClient, LiveWS, type MessageData } from "bilibili-live-danmaku";
 
 import { getCookieString } from "../network/cookie";
 import { UserAgent } from "../network/user-agent";
+import { userStore } from "../store";
 import { channel } from "./channel";
 import {
+  buildLiveDanmakuCandidates,
   extractLiveAudioCandidates,
   getLiveStatusMessage,
   LiveStatus,
   sortLiveAudioCandidates,
   type LiveAudioCandidate,
   type LiveAudioPlayUrls,
+  type LiveDanmakuCandidate,
   type LiveDanmakuLine,
   type LiveDanmakuLineType,
 } from "../../shared/live";
@@ -40,12 +43,47 @@ interface LiveDanmakuConnection {
   live: LiveWS;
 }
 
+interface LiveRoomInitResponse {
+  code: number;
+  message?: string;
+  msg?: string;
+  data?: {
+    room_id?: number;
+  };
+}
+
+interface LiveDanmakuInfo {
+  token?: string;
+  host_list?: {
+    host: string;
+    port: number;
+    wss_port: number;
+    ws_port: number;
+  }[];
+}
+
+interface ConnectedLiveDanmaku {
+  live: LiveWS;
+  candidate: LiveDanmakuCandidate;
+  usedFallback: boolean;
+}
+
 const liveRequestHeaders = async () => ({
   Cookie: await getCookieString(),
   Referer: "https://live.bilibili.com/",
   Origin: "https://live.bilibili.com",
   "User-Agent": UserAgent,
 });
+
+const parseCookieValue = (cookie: string, key: string) =>
+  cookie
+    .split(";")
+    .map(item => item.trim())
+    .find(item => item.startsWith(`${key}=`))
+    ?.slice(key.length + 1);
+
+const getDanmakuBuvid = (cookie: string) =>
+  parseCookieValue(cookie, "buvid4") || parseCookieValue(cookie, "buvid3") || parseCookieValue(cookie, "buvid_fp");
 
 const isAllowedLiveMediaHost = (host: string) => {
   const hostname = host.toLowerCase();
@@ -293,25 +331,203 @@ const sendDanmakuStatus = (webContents: WebContents, status: "connected" | "clos
   webContents.send(channel.live.danmakuStatus, { status, message });
 };
 
-const subscribeLiveDanmaku = async (webContents: WebContents, roomId: number) => {
-  closeDanmaku(webContents.id);
+const getLongRoomId = async (roomId: number) => {
+  const response = await got
+    .get("https://api.live.bilibili.com/room/v1/Room/room_init", {
+      searchParams: { id: roomId },
+      headers: await liveRequestHeaders(),
+      responseType: "json",
+      timeout: { request: 12000 },
+    })
+    .json<LiveRoomInitResponse>();
 
+  assertResponseOk(response, "获取直播间信息失败");
+
+  const longRoomId = response.data?.room_id;
+  if (!longRoomId) {
+    throw new Error("直播间不存在");
+  }
+
+  return longRoomId;
+};
+
+const getDanmakuInfo = async (roomId: number) => {
   const client = new BilibiliApiClient({
     cookie: await getCookieString(),
     userAgent: UserAgent,
   });
-  const res = await client.xliveGetDanmuInfo({ id: roomId });
-  const config = parseLiveConfig(res.data);
-  const live = new LiveWS(roomId, config);
-  danmakuConnections.set(webContents.id, { roomId, live });
+  const response = await client.xliveGetDanmuInfo({ id: roomId });
+  return response.data as LiveDanmakuInfo;
+};
 
-  const handleOpen = () => sendDanmakuStatus(webContents, "connected");
+const connectToDanmakuCandidate = ({
+  candidate,
+  roomId,
+  token,
+  uid,
+  buvid,
+}: {
+  candidate: LiveDanmakuCandidate;
+  roomId: number;
+  token: string;
+  uid: number;
+  buvid?: string;
+}) =>
+  new Promise<LiveWS>((resolve, reject) => {
+    let settled = false;
+    const live = new LiveWS(roomId, {
+      address: candidate.address,
+      authBody: {
+        uid,
+        roomid: roomId,
+        protover: 3,
+        platform: "web",
+        type: 2,
+        key: token,
+        buvid,
+      },
+    });
+
+    const timeout = setTimeout(() => {
+      settle(() => {
+        live.close();
+        reject(new Error("弹幕连接超时"));
+      });
+    }, 8000);
+
+    const cleanup = () => {
+      clearTimeout(timeout);
+      live.removeEventListener("CONNECT_SUCCESS", handleConnect);
+      live.removeEventListener("error", handleError);
+      live.removeEventListener("close", handleClose);
+    };
+
+    const settle = (callback: () => void) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      callback();
+    };
+
+    const handleConnect = () => {
+      settle(() => resolve(live));
+    };
+
+    const handleError = (event: Event) => {
+      settle(() => {
+        live.close();
+        reject(new Error(`弹幕节点连接错误: ${event.type}`));
+      });
+    };
+
+    const handleClose = (event: CloseEvent) => {
+      settle(() => {
+        reject(new Error(`弹幕节点关闭: ${event.code || "unknown"} ${event.reason || ""}`.trim()));
+      });
+    };
+
+    live.addEventListener("CONNECT_SUCCESS", handleConnect);
+    live.addEventListener("error", handleError);
+    live.addEventListener("close", handleClose);
+  });
+
+const connectLiveDanmakuWithFallback = async ({
+  roomId,
+  token,
+  candidates,
+  uid,
+  buvid,
+}: {
+  roomId: number;
+  token: string;
+  candidates: LiveDanmakuCandidate[];
+  uid: number;
+  buvid?: string;
+}): Promise<ConnectedLiveDanmaku> => {
+  let lastError: unknown;
+
+  for (let index = 0; index < candidates.length; index += 1) {
+    const candidate = candidates[index];
+    try {
+      log.info("[live-danmaku] connecting", {
+        roomId,
+        host: candidate.host,
+        port: candidate.port,
+        index,
+        total: candidates.length,
+      });
+      const live = await connectToDanmakuCandidate({ candidate, roomId, token, uid, buvid });
+      return {
+        live,
+        candidate,
+        usedFallback: index > 0,
+      };
+    } catch (error) {
+      lastError = error;
+      log.warn("[live-danmaku] candidate failed", {
+        roomId,
+        host: candidate.host,
+        port: candidate.port,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  throw lastError instanceof Error ? lastError : new Error("弹幕节点全部连接失败");
+};
+
+const subscribeLiveDanmaku = async (webContents: WebContents, roomId: number) => {
+  closeDanmaku(webContents.id);
+
+  const longRoomId = await getLongRoomId(roomId);
+  const danmakuInfo = await getDanmakuInfo(longRoomId);
+  const token = danmakuInfo.token;
+  const candidates = buildLiveDanmakuCandidates(danmakuInfo.host_list);
+  if (!token) {
+    throw new Error("获取弹幕鉴权失败");
+  }
+  if (!candidates.length) {
+    throw new Error("没有可用的弹幕服务器");
+  }
+
+  const cookie = await getCookieString();
+  const connected = await connectLiveDanmakuWithFallback({
+    roomId: longRoomId,
+    token,
+    candidates,
+    uid: Number(userStore.get("mid") || 0),
+    buvid: getDanmakuBuvid(cookie),
+  });
+  const { live } = connected;
+  danmakuConnections.set(webContents.id, { roomId: longRoomId, live });
+
+  log.info("[live-danmaku] connected", {
+    roomId,
+    longRoomId,
+    host: connected.candidate.host,
+    port: connected.candidate.port,
+    hostCount: candidates.length,
+    usedFallback: connected.usedFallback,
+  });
+  sendDanmakuStatus(webContents, "connected");
+
   const handleError = (event: Event) => {
-    log.warn("[live-danmaku] connection error", event);
+    log.warn("[live-danmaku] connection error", {
+      roomId: longRoomId,
+      host: connected.candidate.host,
+      eventType: event.type,
+    });
     sendDanmakuStatus(webContents, "error", "弹幕连接失败");
   };
-  const handleClose = () => {
+
+  const handleClose = (event: CloseEvent) => {
     danmakuConnections.delete(webContents.id);
+    log.warn("[live-danmaku] connection closed", {
+      roomId: longRoomId,
+      host: connected.candidate.host,
+      code: event.code,
+      reason: event.reason,
+    });
     sendDanmakuStatus(webContents, "closed");
   };
   const handleDanmaku = ({ data }: { data: MessageData.DANMU_MSG }) => {
@@ -323,7 +539,6 @@ const subscribeLiveDanmaku = async (webContents: WebContents, roomId: number) =>
     if (line && !webContents.isDestroyed()) webContents.send(channel.live.danmakuMessage, line);
   };
 
-  live.addEventListener("CONNECT_SUCCESS", handleOpen);
   live.addEventListener("DANMU_MSG", handleDanmaku);
   live.addEventListener("SUPER_CHAT_MESSAGE", handleSuperChat);
   live.addEventListener("error", handleError);
@@ -336,7 +551,16 @@ export function registerLiveHandlers() {
   ipcMain.handle(channel.live.getAudioPlayUrls, async (_, roomId: number) => getLiveAudioPlayUrls(roomId));
 
   ipcMain.handle(channel.live.danmakuSubscribe, async (event, roomId: number) => {
-    await subscribeLiveDanmaku(event.sender, roomId);
+    try {
+      await subscribeLiveDanmaku(event.sender, roomId);
+    } catch (error) {
+      log.warn("[live-danmaku] subscribe failed", {
+        roomId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      sendDanmakuStatus(event.sender, "error", "弹幕连接失败");
+      throw error;
+    }
   });
 
   ipcMain.handle(channel.live.danmakuClose, event => {

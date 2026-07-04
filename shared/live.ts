@@ -56,6 +56,17 @@ export interface LiveDanmakuLine {
   repeatCount?: number;
 }
 
+export interface LiveDanmakuHostInfo {
+  host: string;
+  wss_port?: number;
+}
+
+export interface LiveDanmakuCandidate {
+  host: string;
+  port: number;
+  address: string;
+}
+
 export interface LiveDanmakuSettings {
   enabled: boolean;
   showUsername: boolean;
@@ -163,6 +174,27 @@ export const splitBlockedKeywords = (value?: string) =>
     .split(/[\n,，]/)
     .map(item => item.trim())
     .filter(Boolean);
+
+export const buildLiveDanmakuCandidates = (hostList?: LiveDanmakuHostInfo[]): LiveDanmakuCandidate[] => {
+  const seen = new Set<string>();
+  const candidates: LiveDanmakuCandidate[] = [];
+
+  hostList?.forEach(({ host, wss_port: port }) => {
+    if (!host || !port) return;
+
+    const key = `${host}:${port}`;
+    if (seen.has(key)) return;
+
+    seen.add(key);
+    candidates.push({
+      host,
+      port,
+      address: `wss://${host}:${port}/sub`,
+    });
+  });
+
+  return candidates;
+};
 
 export const mergeLiveDanmakuLine = (
   lines: LiveDanmakuLine[],
