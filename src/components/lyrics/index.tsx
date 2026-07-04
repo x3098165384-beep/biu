@@ -489,14 +489,6 @@ const Lyrics = ({ color, centered, showControls }: { color?: string; centered?: 
               SC{line.price ? ` ¥${line.price}` : ""}
             </span>
           )}
-          {liveDanmakuSettings.showUsername && (
-            <span
-              className={clsx("font-semibold", isActive ? activeTextBase : "")}
-              style={{ color: color || undefined }}
-            >
-              {line.username}
-            </span>
-          )}
           <span className={clsx(isSuperChat ? "font-bold text-amber-100" : "", isActive ? activeTextBase : "")}>
             {line.text}
             {line.repeatCount && line.repeatCount > 1 ? ` x${line.repeatCount}` : ""}

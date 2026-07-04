@@ -79,7 +79,7 @@ export interface LiveDanmakuSettings {
 
 export const defaultLiveDanmakuSettings: LiveDanmakuSettings = {
   enabled: true,
-  showUsername: true,
+  showUsername: false,
   showSuperChat: true,
   maxLines: 80,
   maxPerSecond: 8,

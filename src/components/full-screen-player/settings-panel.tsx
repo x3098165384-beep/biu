@@ -169,13 +169,6 @@ const FullScreenPlayerSettingsPanel = ({ isUiVisible = true }: { isUiVisible?: b
           {liveDanmaku.enabled && (
             <>
               <div className="flex items-center justify-between">
-                <div className="text-medium mr-6">显示用户名</div>
-                <Switch
-                  isSelected={liveDanmaku.showUsername}
-                  onValueChange={showUsername => updateLiveDanmaku({ showUsername })}
-                />
-              </div>
-              <div className="flex items-center justify-between">
                 <div className="text-medium mr-6">显示醒目留言</div>
                 <Switch
                   isSelected={liveDanmaku.showSuperChat}
