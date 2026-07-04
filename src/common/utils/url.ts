@@ -11,14 +11,27 @@ export const formatUrlProtocol = (url?: string) => {
   return url;
 };
 
-const getBiliVideoLink = (data: { type: "mv" | "audio"; bvid?: string; sid?: string | number; pageIndex?: number }) => {
+const getBiliVideoLink = (data: {
+  type: "mv" | "audio" | "live";
+  bvid?: string;
+  sid?: string | number;
+  roomId?: string | number;
+  shortId?: string | number;
+  pageIndex?: number;
+}) => {
+  if (data.type === "live") {
+    return `https://live.bilibili.com/${data.shortId || data.roomId}`;
+  }
+
   return `https://www.bilibili.com/${data?.type === "mv" ? `video/${data?.bvid}${(data.pageIndex ?? 0) > 1 ? `?p=${data.pageIndex}` : ""}` : `audio/au${data?.sid}`}`;
 };
 
 export const openBiliVideoLink = (data: {
-  type: "mv" | "audio";
+  type: "mv" | "audio" | "live";
   bvid?: string;
   sid?: string | number;
+  roomId?: string | number;
+  shortId?: string | number;
   pageIndex?: number;
 }) => {
   window.electron.openExternal(getBiliVideoLink(data));

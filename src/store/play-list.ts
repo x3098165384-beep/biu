@@ -3,6 +3,7 @@ import log from "electron-log/renderer";
 import { shuffle } from "es-toolkit/array";
 import { remove } from "es-toolkit/array";
 import { uniqueId } from "es-toolkit/compat";
+import Hls, { type ErrorData } from "hls.js";
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import { immer } from "zustand/middleware/immer";
@@ -13,11 +14,12 @@ import { beginPlayReport, endPlayReport, reportHeartbeat } from "@/common/utils/
 import { stripHtml } from "@/common/utils/str";
 import { formatUrlProtocol } from "@/common/utils/url";
 import { getAudioSongInfo } from "@/service/audio-song-info";
+import { getLiveAudioPlayUrl, getLiveRoomInfo, LiveStatus } from "@/service/live-room";
 import { getWebInterfaceView } from "@/service/web-interface-view";
 
 import { usePlayProgress } from "./play-progress";
 
-export type PlayDataType = "mv" | "audio";
+export type PlayDataType = "mv" | "audio" | "live";
 
 export interface PlayData {
   id: string;
@@ -29,6 +31,14 @@ export interface PlayData {
   bvid?: string;
   /** 音频id */
   sid?: number;
+  /** 直播间id */
+  roomId?: number;
+  /** 直播间短号 */
+  shortId?: number;
+  /** 直播状态 */
+  liveStatus?: LiveStatus;
+  /** 直播分区 */
+  areaName?: string;
   /** 视频aid,部分视频操作需要，例如收藏 */
   aid?: string;
   /** 视频分集id */
@@ -94,6 +104,10 @@ export interface PlayItem {
   title: string;
   bvid?: string;
   sid?: number;
+  roomId?: number;
+  shortId?: number;
+  liveStatus?: LiveStatus;
+  areaName?: string;
   cover?: string;
   ownerName?: string;
   ownerMid?: number;
@@ -171,6 +185,25 @@ const getAudioData = async (sid: number) => {
   ];
 };
 
+const getLiveData = async (roomId: number) => {
+  const roomInfo = await getLiveRoomInfo(roomId);
+
+  return [
+    {
+      id: idGenerator(),
+      type: "live" as PlayDataType,
+      roomId: roomInfo.room_id,
+      shortId: roomInfo.short_id,
+      title: roomInfo.title || `直播间 ${roomInfo.short_id || roomInfo.room_id}`,
+      cover: formatUrlProtocol(roomInfo.cover || roomInfo.background || ""),
+      ownerName: roomInfo.uname,
+      ownerMid: roomInfo.uid,
+      liveStatus: roomInfo.live_status,
+      areaName: roomInfo.area_name,
+    },
+  ];
+};
+
 const toastError = (title: string) => {
   addToast({
     title,
@@ -206,6 +239,111 @@ const createAudio = (): HTMLAudioElement => {
 };
 
 export const audio = createAudio();
+
+let liveHls: Hls | undefined;
+let isRefreshingLiveStream = false;
+
+const isLivePlayItem = (item?: { type?: PlayDataType }) => item?.type === "live";
+
+const destroyLiveHls = () => {
+  liveHls?.destroy();
+  liveHls = undefined;
+  isRefreshingLiveStream = false;
+};
+
+const updateCurrentLiveUrl = (audioUrl: string) => {
+  usePlayList.setState(state => {
+    const listItem = state.list.find(item => item.id === state.playId);
+    if (listItem) {
+      listItem.audioUrl = audioUrl;
+      listItem.liveStatus = LiveStatus.Live;
+    }
+    state.duration = undefined;
+  });
+};
+
+const handleLiveHlsFatalError = async (error: ErrorData) => {
+  if (!error.fatal || isRefreshingLiveStream) return;
+
+  const playItem = usePlayList.getState().getPlayItem?.();
+  if (!isLivePlayItem(playItem) || !playItem?.roomId) return;
+
+  isRefreshingLiveStream = true;
+  try {
+    const livePlayData = await getLiveAudioPlayUrl(playItem.roomId);
+    await loadLiveSource(livePlayData.audioUrl, !audio.paused);
+    updateCurrentLiveUrl(livePlayData.audioUrl);
+  } catch (refreshError) {
+    log.error("[Live stream refresh failed]", { error, refreshError, playItem });
+    toastError("直播流已断开");
+    audio.pause();
+  } finally {
+    isRefreshingLiveStream = false;
+  }
+};
+
+const loadLiveSource = (url: string, shouldPlay: boolean) => {
+  destroyLiveHls();
+  audio.pause();
+  audio.src = "";
+  audio.load();
+
+  if (Hls.isSupported()) {
+    return new Promise<void>((resolve, reject) => {
+      let settled = false;
+      const hls = new Hls({
+        backBufferLength: 30,
+        lowLatencyMode: true,
+      });
+
+      liveHls = hls;
+
+      const settle = (callback: () => void) => {
+        if (settled) return;
+        settled = true;
+        callback();
+      };
+
+      hls.on(Hls.Events.MEDIA_ATTACHED, () => {
+        hls.loadSource(url);
+      });
+
+      hls.on(Hls.Events.MANIFEST_PARSED, () => {
+        settle(() => {
+          if (shouldPlay) {
+            void playAudioSafely();
+          }
+          resolve();
+        });
+      });
+
+      hls.on(Hls.Events.ERROR, (_, data) => {
+        if (!data.fatal) return;
+        if (!settled) {
+          settle(() => {
+            destroyLiveHls();
+            reject(new Error(data.details || data.type || "直播流加载失败"));
+          });
+          return;
+        }
+        void handleLiveHlsFatalError(data);
+      });
+
+      hls.attachMedia(audio);
+    });
+  }
+
+  if (audio.canPlayType("application/vnd.apple.mpegurl")) {
+    audio.src = url;
+    audio.load();
+    if (shouldPlay) {
+      void playAudioSafely();
+    }
+    return Promise.resolve();
+  }
+
+  return Promise.reject(new Error("当前环境不支持直播流播放"));
+};
 
 const updatePlaybackState = () => {
   if ("mediaSession" in navigator) {
@@ -252,8 +390,22 @@ const updatePositionState = () => {
 };
 
 export const isSame = (
-  item1?: { type: "mv" | "audio"; sid?: number; bvid?: string; source?: "local" | "online"; id?: string },
-  item2?: { type: "mv" | "audio"; sid?: number; bvid?: string; source?: "local" | "online"; id?: string },
+  item1?: {
+    type: PlayDataType;
+    sid?: number;
+    bvid?: string;
+    roomId?: number;
+    source?: "local" | "online";
+    id?: string;
+  },
+  item2?: {
+    type: PlayDataType;
+    sid?: number;
+    bvid?: string;
+    roomId?: number;
+    source?: "local" | "online";
+    id?: string;
+  },
 ) => {
   if (!item1 || !item2) {
     return false;
@@ -270,6 +422,9 @@ export const isSame = (
   if (item1.type === "audio") {
     return item1.sid !== undefined && item2.sid !== undefined && item1.sid === item2.sid;
   }
+  if (item1.type === "live") {
+    return item1.roomId !== undefined && item2.roomId !== undefined && item1.roomId === item2.roomId;
+  }
   return false;
 };
 
@@ -283,6 +438,7 @@ export const usePlayList = create<State & Action>()(
         const { playId, list } = get();
         const currentPlayItem = list.find(item => item.id === playId);
         if (currentPlayItem?.source === "local" && currentPlayItem?.audioUrl) {
+          destroyLiveHls();
           if (audio.src !== currentPlayItem.audioUrl) {
             audio.src = currentPlayItem.audioUrl;
           }
@@ -292,7 +448,14 @@ export const usePlayList = create<State & Action>()(
           }
           return;
         }
+        if (currentPlayItem?.type === "live" && currentPlayItem?.audioUrl) {
+          await loadLiveSource(currentPlayItem.audioUrl, false);
+          usePlayProgress.getState().setCurrentTime(0);
+          set({ duration: undefined });
+          return;
+        }
         if (isUrlValid(currentPlayItem?.audioUrl)) {
+          destroyLiveHls();
           if (audio.src !== currentPlayItem.audioUrl) {
             audio.src = currentPlayItem.audioUrl;
           }
@@ -306,6 +469,7 @@ export const usePlayList = create<State & Action>()(
         if (currentPlayItem?.type === "mv" && currentPlayItem?.bvid && currentPlayItem?.cid) {
           const mvPlayData = await getDashUrl(currentPlayItem.bvid, currentPlayItem.cid);
           if (mvPlayData?.audioUrl) {
+            destroyLiveHls();
             if (audio.src !== mvPlayData.audioUrl) {
               audio.src = mvPlayData.audioUrl;
               const currentTime = usePlayProgress.getState().currentTime;
@@ -334,9 +498,34 @@ export const usePlayList = create<State & Action>()(
           }
         }
 
+        if (currentPlayItem?.type === "live" && currentPlayItem?.roomId) {
+          const livePlayData = await getLiveAudioPlayUrl(currentPlayItem.roomId);
+          if (livePlayData?.audioUrl) {
+            await loadLiveSource(livePlayData.audioUrl, false);
+            usePlayProgress.getState().setCurrentTime(0);
+            set(state => {
+              const listItem = state.list.find(item => item.id === state.playId);
+              if (listItem) {
+                listItem.audioUrl = livePlayData.audioUrl;
+                listItem.liveStatus = LiveStatus.Live;
+              }
+              state.duration = undefined;
+            });
+          } else {
+            log.error("无法获取直播播放链接", {
+              type: "live",
+              roomId: currentPlayItem.roomId,
+              title: currentPlayItem.title,
+              livePlayData,
+            });
+            toastError("无法获取直播播放链接");
+          }
+        }
+
         if (currentPlayItem?.type === "audio" && currentPlayItem?.sid) {
           const musicPlayData = await getAudioUrl(currentPlayItem.sid);
           if (musicPlayData?.audioUrl) {
+            destroyLiveHls();
             if (audio.src !== musicPlayData.audioUrl) {
               audio.src = musicPlayData.audioUrl;
               const currentTime = usePlayProgress.getState().currentTime;
@@ -380,6 +569,10 @@ export const usePlayList = create<State & Action>()(
             audio.loop = get().playMode === PlayMode.Single;
 
             audio.ondurationchange = () => {
+              if (isLivePlayItem(get().getPlayItem?.())) {
+                set({ duration: undefined });
+                return;
+              }
               const dur = audio.duration;
               if (!Number.isNaN(dur) && dur !== Infinity) {
                 set({ duration: Math.round(dur * 100) / 100 });
@@ -388,6 +581,10 @@ export const usePlayList = create<State & Action>()(
             };
 
             audio.ontimeupdate = () => {
+              if (isLivePlayItem(get().getPlayItem?.())) {
+                usePlayProgress.getState().setCurrentTime(0);
+                return;
+              }
               const currentTime = Math.round(audio.currentTime * 100) / 100;
               usePlayProgress.getState().setCurrentTime(currentTime);
               const playItem = get().getPlayItem?.();
@@ -425,6 +622,9 @@ export const usePlayList = create<State & Action>()(
             };
 
             audio.onended = () => {
+              if (isLivePlayItem(get().getPlayItem?.())) {
+                return;
+              }
               if (get().playMode === PlayMode.Single) {
                 return;
               }
@@ -474,7 +674,7 @@ export const usePlayList = create<State & Action>()(
                 await ensureAudioSrcValid();
 
                 const localCurrentTime = usePlayProgress.getState().initCurrentTime();
-                if (localCurrentTime) {
+                if (localCurrentTime && !isLivePlayItem(playItem)) {
                   audio.currentTime = localCurrentTime;
                 }
 
@@ -523,6 +723,9 @@ export const usePlayList = create<State & Action>()(
           });
         },
         seek: s => {
+          if (isLivePlayItem(get().getPlayItem?.())) {
+            return;
+          }
           usePlayProgress.getState().setCurrentTime(s);
           if (audio) {
             audio.currentTime = s;
@@ -553,11 +756,26 @@ export const usePlayList = create<State & Action>()(
         setShouldKeepPagesOrderInRandomPlayMode: shouldKeep => {
           set({ shouldKeepPagesOrderInRandomPlayMode: shouldKeep });
         },
-        play: async ({ type, bvid, sid, title, cover, ownerName, ownerMid, id, source, audioUrl }: PlayItem) => {
+        play: async ({
+          type,
+          bvid,
+          sid,
+          roomId,
+          shortId,
+          liveStatus,
+          areaName,
+          title,
+          cover,
+          ownerName,
+          ownerMid,
+          id,
+          source,
+          audioUrl,
+        }: PlayItem) => {
           const { list, playId } = get();
           const currentItem = list?.find(item => item.id === playId);
           const sanitizedTitle = sanitizeTitle(title);
-          const candidate = { type, bvid, sid, source, id };
+          const candidate = { type, bvid, sid, roomId, source, id };
 
           // 当前正在播放，如果暂停了则播放
           if (isSame(currentItem, candidate)) {
@@ -600,6 +818,10 @@ export const usePlayList = create<State & Action>()(
                     type,
                     bvid,
                     sid,
+                    roomId,
+                    shortId,
+                    liveStatus,
+                    areaName,
                     title: sanitizedTitle,
                     cover: cover ? formatUrlProtocol(cover) : undefined,
                     ownerName,
@@ -614,6 +836,10 @@ export const usePlayList = create<State & Action>()(
 
             if (type === "audio" && sid) {
               playItem = await getAudioData(sid);
+            }
+
+            if (type === "live" && roomId) {
+              playItem = await getLiveData(roomId);
             }
           }
 
@@ -742,11 +968,26 @@ export const usePlayList = create<State & Action>()(
             state.playId = list[prevIndex].id;
           });
         },
-        addToNext: async ({ type, title, bvid, sid, cover, ownerName, ownerMid, id, source, audioUrl }) => {
+        addToNext: async ({
+          type,
+          title,
+          bvid,
+          sid,
+          roomId,
+          shortId,
+          liveStatus,
+          areaName,
+          cover,
+          ownerName,
+          ownerMid,
+          id,
+          source,
+          audioUrl,
+        }) => {
           const { playId, nextId: currentNextId, list } = get();
           const currentItem = list.find(item => item.id === playId);
           const sanitizedTitle = sanitizeTitle(title);
-          const candidate = { type, bvid, sid, source, id };
+          const candidate = { type, bvid, sid, roomId, source, id };
           // 如果当前正在播放，则不添加
           if (isSame(candidate, currentItem)) {
             return;
@@ -783,6 +1024,10 @@ export const usePlayList = create<State & Action>()(
                     type,
                     bvid,
                     sid,
+                    roomId,
+                    shortId,
+                    liveStatus,
+                    areaName,
                     source,
                     audioUrl,
                     title: sanitizedTitle,
@@ -797,6 +1042,10 @@ export const usePlayList = create<State & Action>()(
                     type,
                     bvid,
                     sid,
+                    roomId,
+                    shortId,
+                    liveStatus,
+                    areaName,
                     title: sanitizedTitle,
                     cover: cover ? formatUrlProtocol(cover) : undefined,
                     ownerName,
@@ -810,6 +1059,10 @@ export const usePlayList = create<State & Action>()(
 
             if (type === "audio" && sid) {
               nextPlayItem = await getAudioData(sid);
+            }
+
+            if (type === "live" && roomId) {
+              nextPlayItem = await getLiveData(roomId);
             }
           }
 
@@ -828,8 +1081,8 @@ export const usePlayList = create<State & Action>()(
             return;
           }
 
-          // 当前播放的是音频，则直接插入到其后面
-          if (currentItem?.type === "audio") {
+          // 当前播放的是音频或直播，则直接插入到其后面
+          if (currentItem?.type === "audio" || currentItem?.type === "live") {
             set(state => {
               state.nextId = nextId;
               const currentItemIndex = list.findIndex(item => item.id === state.playId);
@@ -942,6 +1195,7 @@ export const usePlayList = create<State & Action>()(
             endPlayReport();
           }
           if (audio) {
+            destroyLiveHls();
             audio.src = "";
             if (!audio.paused) {
               audio.pause();
@@ -993,6 +1247,7 @@ async function refreshCurrentAudioSource(): Promise<boolean> {
     if (playItem.type === "mv" && playItem.bvid && playItem.cid) {
       const mvPlayData = await getDashUrl(playItem.bvid, playItem.cid);
       if (mvPlayData?.audioUrl) {
+        destroyLiveHls();
         audio.src = mvPlayData.audioUrl;
         usePlayList.setState(state => {
           const listItem = state.list.find(item => item.id === state.playId);
@@ -1010,6 +1265,7 @@ async function refreshCurrentAudioSource(): Promise<boolean> {
     if (playItem.type === "audio" && playItem.sid) {
       const musicPlayData = await getAudioUrl(playItem.sid);
       if (musicPlayData?.audioUrl) {
+        destroyLiveHls();
         audio.src = musicPlayData.audioUrl;
         usePlayList.setState(state => {
           const listItem = state.list.find(item => item.id === state.playId);
@@ -1018,6 +1274,15 @@ async function refreshCurrentAudioSource(): Promise<boolean> {
             listItem.isLossless = musicPlayData.isLossless;
           }
         });
+        return true;
+      }
+    }
+
+    if (playItem.type === "live" && playItem.roomId) {
+      const livePlayData = await getLiveAudioPlayUrl(playItem.roomId);
+      if (livePlayData?.audioUrl) {
+        await loadLiveSource(livePlayData.audioUrl, false);
+        updateCurrentLiveUrl(livePlayData.audioUrl);
         return true;
       }
     }
@@ -1032,7 +1297,15 @@ async function refreshCurrentAudioSource(): Promise<boolean> {
   return false;
 }
 
-function resetAudioAndPlay(url: string) {
+async function resetAudioAndPlay(url: string, playItem?: PlayData) {
+  usePlayProgress.getState().setCurrentTime(0);
+
+  if (isLivePlayItem(playItem)) {
+    await loadLiveSource(url, true);
+    return;
+  }
+
+  destroyLiveHls();
   audio.src = url;
   audio.currentTime = 0;
   audio.load();
@@ -1062,11 +1335,20 @@ usePlayList.subscribe(async (state, prevState) => {
         }
       }
       if (playItem?.source === "local" && playItem?.audioUrl && audio.paused) {
-        resetAudioAndPlay(playItem.audioUrl);
+        await resetAudioAndPlay(playItem.audioUrl, playItem);
+        return;
+      }
+      if (playItem?.type === "live" && playItem?.audioUrl && audio.paused) {
+        await resetAudioAndPlay(playItem.audioUrl, playItem);
+        updateMediaSession({
+          title: playItem.title,
+          artist: playItem.ownerName,
+          cover: playItem.cover,
+        });
         return;
       }
       if (isUrlValid(playItem?.audioUrl) && audio.paused) {
-        resetAudioAndPlay(playItem.audioUrl);
+        await resetAudioAndPlay(playItem.audioUrl, playItem);
         return;
       }
 
@@ -1074,7 +1356,7 @@ usePlayList.subscribe(async (state, prevState) => {
         if (playItem?.bvid && playItem?.cid) {
           const mvPlayData = await getDashUrl(playItem.bvid, playItem.cid);
           if (mvPlayData?.audioUrl) {
-            resetAudioAndPlay(mvPlayData?.audioUrl);
+            await resetAudioAndPlay(mvPlayData?.audioUrl, playItem);
 
             updateMediaSession({
               title: playItem.pageTitle || playItem.title,
@@ -1107,7 +1389,7 @@ usePlayList.subscribe(async (state, prevState) => {
           if (firstMV?.cid) {
             const mvPlayData = await getDashUrl(playItem.bvid, firstMV.cid);
             if (mvPlayData?.audioUrl) {
-              resetAudioAndPlay(mvPlayData?.audioUrl);
+              await resetAudioAndPlay(mvPlayData?.audioUrl, firstMV);
 
               updateMediaSession({
                 title: firstMV.pageTitle || firstMV.title,
@@ -1158,7 +1440,7 @@ usePlayList.subscribe(async (state, prevState) => {
       if (playItem?.type === "audio" && playItem?.sid) {
         const musicPlayData = await getAudioUrl(playItem.sid);
         if (musicPlayData?.audioUrl) {
-          resetAudioAndPlay(musicPlayData?.audioUrl);
+          await resetAudioAndPlay(musicPlayData?.audioUrl, playItem);
 
           updateMediaSession({
             title: playItem.title,
@@ -1180,6 +1462,29 @@ usePlayList.subscribe(async (state, prevState) => {
             musicPlayData,
           });
           toastError("无法获取音频播放链接");
+        }
+      }
+
+      if (playItem?.type === "live" && playItem?.roomId) {
+        const livePlayData = await getLiveAudioPlayUrl(playItem.roomId);
+        if (livePlayData?.audioUrl) {
+          await resetAudioAndPlay(livePlayData.audioUrl, playItem);
+
+          updateMediaSession({
+            title: playItem.title,
+            artist: playItem.ownerName,
+            cover: playItem.cover,
+          });
+
+          updateCurrentLiveUrl(livePlayData.audioUrl);
+        } else {
+          log.error("无法获取直播播放链接", {
+            type: "live",
+            roomId: playItem.roomId,
+            title: playItem.title,
+            livePlayData,
+          });
+          toastError("无法获取直播播放链接");
         }
       }
     }

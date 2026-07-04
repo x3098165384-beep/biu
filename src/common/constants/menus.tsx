@@ -11,6 +11,8 @@ import {
   RiCalendarScheduleFill,
   RiFolderMusicLine,
   RiFolderMusicFill,
+  RiLiveLine,
+  RiLiveFill,
 } from "@remixicon/react";
 
 import { type MenuItemProps } from "@/components/menu/menu-item";
@@ -48,6 +50,12 @@ export const DefaultMenuList: (MenuItemProps & { needLogin?: boolean })[] = [
     href: "/local-music",
     icon: RiFolderMusicLine,
     activeIcon: RiFolderMusicFill,
+  },
+  {
+    title: "直播收听",
+    href: "/live",
+    icon: RiLiveLine,
+    activeIcon: RiLiveFill,
   },
   {
     title: "下载记录",

@@ -88,7 +88,7 @@ const ListItem = ({ data, isLogin, isPlaying, onAction, onClose, onPress }: Prop
 
           <DropdownMenu
             aria-label="播放列表操作菜单"
-            items={getMenus({ isLogin, isLocal: data.source === "local" })}
+            items={getMenus({ isLogin, isLocal: data.source === "local", isLive: data.type === "live" })}
             // @ts-ignore 忽略onAction类型问题
             onAction={onAction}
           >

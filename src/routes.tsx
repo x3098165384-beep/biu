@@ -7,6 +7,7 @@ import EmptyPage from "./pages/empty";
 import FollowList from "./pages/follow-list";
 import History from "./pages/history";
 import Later from "./pages/later";
+import LivePage from "./pages/live";
 import LocalMusicPage from "./pages/local-music";
 import MiniPlayer from "./pages/mini-player";
 import MusicRecommend from "./pages/music-recommend";
@@ -60,6 +61,10 @@ const routes: RouteObject[] = [
       {
         path: "local-music",
         element: <LocalMusicPage />,
+      },
+      {
+        path: "live",
+        element: <LivePage />,
       },
       {
         path: "search",

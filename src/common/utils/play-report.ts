@@ -10,7 +10,7 @@ const HEARTBEAT_INTERVAL_SECONDS = 30;
 
 interface ReportablePlayItem {
   id?: string;
-  type?: "mv" | "audio";
+  type?: "mv" | "audio" | "live";
   aid?: number | string;
   bvid?: string;
   cid?: number | string;

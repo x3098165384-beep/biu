@@ -3,6 +3,36 @@ import { describe, expect, test, beforeEach, vi } from "vitest";
 import { PlayMode } from "@/common/constants/audio";
 import { usePlayList } from "@/store/play-list";
 
+vi.mock("hls.js", () => {
+  class HlsMock {
+    static Events = {
+      ERROR: "hlsError",
+      MANIFEST_PARSED: "hlsManifestParsed",
+      MEDIA_ATTACHED: "hlsMediaAttached",
+    };
+
+    static isSupported() {
+      return true;
+    }
+
+    handlers = new Map<string, Function>();
+
+    on(event: string, handler: Function) {
+      this.handlers.set(event, handler);
+    }
+
+    attachMedia() {
+      this.handlers.get(HlsMock.Events.MEDIA_ATTACHED)?.();
+      this.handlers.get(HlsMock.Events.MANIFEST_PARSED)?.();
+    }
+
+    loadSource = vi.fn();
+    destroy = vi.fn();
+  }
+
+  return { default: HlsMock };
+});
+
 vi.mock("@/common/utils/audio", () => ({
   getAudioUrl: vi.fn(async () => ({ audioUrl: "https://audio.test/a.mp3", isLossless: false })),
   getDashUrl: vi.fn(async () => ({
@@ -34,6 +64,31 @@ vi.mock("@/service/audio-song-info", () => ({
       curtime: Date.now(),
       aid: 0,
     },
+  })),
+}));
+
+vi.mock("@/service/live-room", () => ({
+  LiveStatus: {
+    Offline: 0,
+    Live: 1,
+    Round: 2,
+  },
+  getLiveRoomInfo: vi.fn(async (roomId: number) => ({
+    room_id: roomId,
+    short_id: roomId,
+    uid: 1,
+    title: "live-title",
+    cover: "https://cover.test/live.png",
+    background: "",
+    uname: "anchor",
+    live_status: 1,
+    area_name: "area",
+  })),
+  getLiveAudioPlayUrl: vi.fn(async () => ({
+    audioUrl: "https://live.test/index.m3u8",
+    format: "fmp4",
+    codec: "avc",
+    quality: 250,
   })),
 }));
 
@@ -169,6 +224,19 @@ describe("play-list store", () => {
     const nextItem = usePlayList.getState().list[idx + 1];
     expect(usePlayList.getState().nextId).toBe(nextItem.id);
     expect(nextItem.sid).toBe(20);
+  });
+
+  test("play live adds item and resolves hls url", async () => {
+    const s = usePlayList.getState();
+    await s.init();
+    await s.play({ type: "live", roomId: 545068, title: "live-title", cover: "", ownerName: "anchor", ownerMid: 1 });
+    await new Promise(resolve => setTimeout(resolve, 0));
+
+    const item = usePlayList.getState().list[0];
+    expect(item.type).toBe("live");
+    expect(item.roomId).toBe(545068);
+    expect(item.audioUrl).toBe("https://live.test/index.m3u8");
+    expect(usePlayList.getState().duration).toBeUndefined();
   });
 
   test("addList deduplicates and preserves playing item", async () => {

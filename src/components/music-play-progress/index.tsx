@@ -18,22 +18,25 @@ const MusicPlayProgress = memo(({ isDisabled, className, trackClassName }: Props
   const currentTime = usePlayProgress(s => s.currentTime);
   const duration = usePlayList(s => s.duration);
   const seek = usePlayList(s => s.seek);
+  const playItem = usePlayList(s => s.getPlayItem());
+  const isLive = playItem?.type === "live";
 
-  const showThumb = !isDisabled && hovered;
+  const shouldDisable = isDisabled || isLive;
+  const showThumb = !shouldDisable && hovered;
 
   return (
     <div className={twMerge("flex w-3/4 items-center space-x-2", className)}>
       <div className="flex justify-center text-sm whitespace-nowrap opacity-70">
-        {currentTime ? formatDuration(currentTime) : "-:--"}
+        {isLive ? "直播中" : currentTime ? formatDuration(currentTime) : "-:--"}
       </div>
       <Slider
         aria-label="播放进度"
         hideThumb={!showThumb}
         minValue={0}
-        maxValue={duration}
-        value={currentTime}
+        maxValue={duration || 0}
+        value={isLive ? 0 : currentTime}
         onChange={v => seek(v as number)}
-        isDisabled={isDisabled}
+        isDisabled={shouldDisable}
         size="sm"
         color={showThumb ? "primary" : "foreground"}
         onMouseEnter={() => setHovered(true)}
@@ -45,7 +48,7 @@ const MusicPlayProgress = memo(({ isDisabled, className, trackClassName }: Props
         }}
       />
       <span className="flex justify-center text-sm whitespace-nowrap opacity-70">
-        {duration ? formatDuration(duration) : "-:--"}
+        {isLive ? "LIVE" : duration ? formatDuration(duration) : "-:--"}
       </span>
     </div>
   );
