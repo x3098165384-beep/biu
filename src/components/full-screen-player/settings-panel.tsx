@@ -1,13 +1,28 @@
 import { useEffect, useState } from "react";
 import { Controller, useForm, useWatch } from "react-hook-form";
 
-import { Switch } from "@heroui/react";
+import { addToast, Button, Switch } from "@heroui/react";
 import { useShallow } from "zustand/shallow";
 
 import { isHex } from "@/common/utils/color";
 import ColorPicker from "@/components/color-picker";
 import { useFullScreenPlayerSettings } from "@/store/full-screen-player-settings";
+import {
+  fetchTtsServerEngines,
+  fetchTtsServerVoices,
+  getTtsServerEngineLabel,
+  getTtsServerEngineValue,
+  getTtsServerVoiceLabel,
+  getTtsServerVoiceValue,
+  useLiveDanmakuSpeech,
+} from "@/store/live-danmaku-speech";
 import { usePlayList } from "@/store/play-list";
+import {
+  defaultLiveAudioLimitSettings,
+  defaultLiveDanmakuSpeechSettings,
+  sanitizeLiveAudioLimitSettings,
+  sanitizeLiveDanmakuSpeechSettings,
+} from "@shared/live";
 
 const FullScreenPlayerSettingsPanel = ({ isUiVisible = true }: { isUiVisible?: boolean }) => {
   const { playId, list } = usePlayList(
@@ -27,6 +42,8 @@ const FullScreenPlayerSettingsPanel = ({ isUiVisible = true }: { isUiVisible?: b
     spectrumColor,
     lyricsColor,
     liveDanmaku,
+    liveDanmakuSpeech,
+    liveAudioLimit,
     update,
   } = useFullScreenPlayerSettings(
     useShallow(s => ({
@@ -38,14 +55,35 @@ const FullScreenPlayerSettingsPanel = ({ isUiVisible = true }: { isUiVisible?: b
       spectrumColor: s.spectrumColor,
       lyricsColor: s.lyricsColor,
       liveDanmaku: s.liveDanmaku,
+      liveDanmakuSpeech: s.liveDanmakuSpeech,
+      liveAudioLimit: s.liveAudioLimit,
       update: s.update,
     })),
   );
   const isLive = playItem?.type === "live";
+  const speechSettings = sanitizeLiveDanmakuSpeechSettings(liveDanmakuSpeech || defaultLiveDanmakuSpeechSettings);
+  const audioLimitSettings = sanitizeLiveAudioLimitSettings(liveAudioLimit || defaultLiveAudioLimitSettings);
+  const enqueueSpeech = useLiveDanmakuSpeech(s => s.enqueue);
   const updateLiveDanmaku = (patch: Partial<typeof liveDanmaku>) => {
     update({
       liveDanmaku: {
         ...liveDanmaku,
+        ...patch,
+      },
+    });
+  };
+  const updateLiveDanmakuSpeech = (patch: Partial<typeof speechSettings>) => {
+    update({
+      liveDanmakuSpeech: {
+        ...speechSettings,
+        ...patch,
+      },
+    });
+  };
+  const updateLiveAudioLimit = (patch: Partial<typeof audioLimitSettings>) => {
+    update({
+      liveAudioLimit: {
+        ...audioLimitSettings,
         ...patch,
       },
     });
@@ -67,6 +105,9 @@ const FullScreenPlayerSettingsPanel = ({ isUiVisible = true }: { isUiVisible?: b
   const [lyricsPickerOpen, setLyricsPickerOpen] = useState(false);
   const [spectrumPickerOpen, setSpectrumPickerOpen] = useState(false);
   const [backgroundPickerOpen, setBackgroundPickerOpen] = useState(false);
+  const [ttsEngines, setTtsEngines] = useState<any[]>([]);
+  const [ttsVoices, setTtsVoices] = useState<any[]>([]);
+  const [ttsLoading, setTtsLoading] = useState(false);
 
   useEffect(() => {
     if (!isUiVisible) {
@@ -124,8 +165,43 @@ const FullScreenPlayerSettingsPanel = ({ isUiVisible = true }: { isUiVisible?: b
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [values?.spectrumColor, values?.lyricsColor, values?.backgroundColor, update]);
 
+  const loadTtsServerOptions = async () => {
+    setTtsLoading(true);
+    try {
+      const engines = await fetchTtsServerEngines(speechSettings.ttsServerBaseUrl);
+      setTtsEngines(engines);
+      const engine = speechSettings.ttsServerEngine || getTtsServerEngineValue(engines[0] || {});
+      if (engine) {
+        if (!speechSettings.ttsServerEngine) {
+          updateLiveDanmakuSpeech({ ttsServerEngine: engine });
+        }
+        setTtsVoices(await fetchTtsServerVoices(speechSettings.ttsServerBaseUrl, engine));
+      }
+      addToast({ color: "success", title: "TTS 服务已连接" });
+    } catch {
+      addToast({ color: "danger", title: "TTS 服务连接失败" });
+    } finally {
+      setTtsLoading(false);
+    }
+  };
+
+  const testSpeech = () => {
+    if (speechSettings.provider === "ttsServer" && !speechSettings.ttsServerEngine) {
+      addToast({ color: "warning", title: "请先刷新并选择 TTS 引擎" });
+      return;
+    }
+    updateLiveDanmakuSpeech({ enabled: true });
+    enqueueSpeech({
+      id: `test-${Date.now()}`,
+      type: "danmaku",
+      username: "",
+      text: "这是一条弹幕朗读测试",
+      time: Date.now(),
+    });
+  };
+
   return (
-    <div className="min-w-[320px] space-y-4">
+    <div className="max-h-[min(72vh,560px)] min-w-[320px] space-y-4 overflow-y-auto pr-2">
       <div className="flex items-center justify-between">
         <div className="text-medium mr-6">显示歌词</div>
         <Controller
@@ -214,6 +290,173 @@ const FullScreenPlayerSettingsPanel = ({ isUiVisible = true }: { isUiVisible?: b
                   className="border-default bg-content1 min-h-20 w-full resize-none rounded border px-2 py-1 outline-none"
                   value={liveDanmaku.blockedKeywords}
                   onChange={event => updateLiveDanmaku({ blockedKeywords: event.target.value })}
+                />
+              </div>
+            </>
+          )}
+        </div>
+      )}
+
+      {isLive && (
+        <div className="border-default/60 space-y-3 border-t pt-4">
+          <div className="flex items-center justify-between">
+            <div className="text-medium mr-6">弹幕朗读</div>
+            <Switch
+              isSelected={speechSettings.enabled}
+              onValueChange={enabled => updateLiveDanmakuSpeech({ enabled })}
+            />
+          </div>
+          <div className="flex items-center justify-between gap-4">
+            <div className="text-medium">朗读引擎</div>
+            <select
+              className="border-default bg-content1 w-40 rounded border px-2 py-1 outline-none"
+              value={speechSettings.provider}
+              onChange={event => updateLiveDanmakuSpeech({ provider: event.target.value as any })}
+            >
+              <option value="ttsServer">TTS Server</option>
+              <option value="webSpeech">系统语音</option>
+            </select>
+          </div>
+          {speechSettings.provider === "ttsServer" && (
+            <>
+              <div className="flex items-center justify-between gap-4">
+                <div className="text-medium">服务地址</div>
+                <input
+                  className="border-default bg-content1 w-48 rounded border px-2 py-1 outline-none"
+                  value={speechSettings.ttsServerBaseUrl}
+                  onChange={event => updateLiveDanmakuSpeech({ ttsServerBaseUrl: event.target.value })}
+                />
+              </div>
+              <div className="flex items-center justify-between gap-4">
+                <div className="text-medium">语音包</div>
+                <div className="flex items-center gap-2">
+                  <select
+                    className="border-default bg-content1 w-32 rounded border px-2 py-1 outline-none"
+                    value={speechSettings.ttsServerEngine}
+                    onChange={async event => {
+                      const engine = event.target.value;
+                      updateLiveDanmakuSpeech({ ttsServerEngine: engine, ttsServerVoice: "" });
+                      if (engine) {
+                        setTtsVoices(await fetchTtsServerVoices(speechSettings.ttsServerBaseUrl, engine).catch(() => []));
+                      }
+                    }}
+                  >
+                    <option value="">选择引擎</option>
+                    {ttsEngines.map(engine => {
+                      const value = getTtsServerEngineValue(engine);
+                      return (
+                        <option key={value} value={value}>
+                          {getTtsServerEngineLabel(engine)}
+                        </option>
+                      );
+                    })}
+                  </select>
+                  <select
+                    className="border-default bg-content1 w-32 rounded border px-2 py-1 outline-none"
+                    value={speechSettings.ttsServerVoice}
+                    onChange={event => updateLiveDanmakuSpeech({ ttsServerVoice: event.target.value })}
+                  >
+                    <option value="">默认</option>
+                    {ttsVoices.map(voice => {
+                      const value = getTtsServerVoiceValue(voice);
+                      return (
+                        <option key={value} value={value}>
+                          {getTtsServerVoiceLabel(voice)}
+                        </option>
+                      );
+                    })}
+                  </select>
+                  <Button size="sm" variant="flat" isLoading={ttsLoading} onPress={loadTtsServerOptions}>
+                    刷新
+                  </Button>
+                </div>
+              </div>
+            </>
+          )}
+          <div className="flex items-center justify-between gap-4">
+            <div className="text-medium">语速</div>
+            <input
+              className="border-default bg-content1 w-20 rounded border px-2 py-1 text-right outline-none"
+              min={0.5}
+              max={2}
+              step={0.1}
+              type="number"
+              value={speechSettings.rate}
+              onChange={event => updateLiveDanmakuSpeech({ rate: Number(event.target.value) || 1 })}
+            />
+          </div>
+          <div className="flex items-center justify-between gap-4">
+            <div className="text-medium">普通弹幕间隔</div>
+            <input
+              className="border-default bg-content1 w-20 rounded border px-2 py-1 text-right outline-none"
+              min={0}
+              max={120}
+              type="number"
+              value={speechSettings.minIntervalSeconds}
+              onChange={event => updateLiveDanmakuSpeech({ minIntervalSeconds: Number(event.target.value) || 0 })}
+            />
+          </div>
+          <div className="flex items-center justify-between">
+            <div className="text-medium mr-6">朗读时降低直播声</div>
+            <Switch
+              isSelected={speechSettings.duckingEnabled}
+              onValueChange={duckingEnabled => updateLiveDanmakuSpeech({ duckingEnabled })}
+            />
+          </div>
+          {speechSettings.duckingEnabled && (
+            <div className="flex items-center justify-between gap-4">
+              <div className="text-medium">直播声保留</div>
+              <input
+                className="border-default bg-content1 w-20 rounded border px-2 py-1 text-right outline-none"
+                min={0}
+                max={1}
+                step={0.05}
+                type="number"
+                value={speechSettings.duckingVolume}
+                onChange={event => updateLiveDanmakuSpeech({ duckingVolume: Number(event.target.value) || 0 })}
+              />
+            </div>
+          )}
+          <div className="flex justify-end">
+            <Button size="sm" variant="flat" onPress={testSpeech}>
+              测试朗读
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {isLive && (
+        <div className="border-default/60 space-y-3 border-t pt-4">
+          <div className="flex items-center justify-between">
+            <div className="text-medium mr-6">喊叫限制</div>
+            <Switch
+              isSelected={audioLimitSettings.enabled}
+              onValueChange={enabled => updateLiveAudioLimit({ enabled })}
+            />
+          </div>
+          {audioLimitSettings.enabled && (
+            <>
+              <div className="flex items-center justify-between gap-4">
+                <div className="text-medium">阈值 dB</div>
+                <input
+                  className="border-default bg-content1 w-20 rounded border px-2 py-1 text-right outline-none"
+                  min={-60}
+                  max={0}
+                  type="number"
+                  value={audioLimitSettings.thresholdDb}
+                  onChange={event => updateLiveAudioLimit({ thresholdDb: Number(event.target.value) || -12 })}
+                />
+              </div>
+              <div className="flex items-center justify-between gap-4">
+                <div className="text-medium">压缩比</div>
+                <input
+                  className="border-default bg-content1 w-20 rounded border px-2 py-1 text-right outline-none"
+                  min={1}
+                  max={20}
+                  step={0.5}
+                  type="number"
+                  value={audioLimitSettings.ratio}
+                  onChange={event => updateLiveAudioLimit({ ratio: Number(event.target.value) || 12 })}
                 />
               </div>
             </>

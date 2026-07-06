@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react";
 
+import { ensureAudioGraph, getAudioAnalyser, resumeAudioGraph } from "@/service/audio-graph";
 import { audio as audioElement } from "@/store/play-list";
 
 interface AudioWaveformProps {
@@ -8,11 +9,6 @@ interface AudioWaveformProps {
   barCount?: number;
   barColor?: string;
 }
-
-// Global AudioContext singleton to prevent multiple MediaElementSourceNode creation
-let audioContext: AudioContext | null = null;
-let analyser: AnalyserNode | null = null;
-let source: MediaElementAudioSourceNode | null = null;
 
 /**
  * 音频波形可视化组件
@@ -29,25 +25,9 @@ const AudioWaveform = ({ width = 56, height = 56, barCount = 40, barColor = "cur
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
 
-    // Initialize AudioContext and Analyser if not already done
     const initAudio = () => {
-      if (!audioContext) {
-        audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
-        analyser = audioContext.createAnalyser();
-        analyser.fftSize = 512; // Increased for better resolution
-
-        try {
-          // Connect the global audio element to the analyser
-          source = audioContext.createMediaElementSource(audioElement);
-          source.connect(analyser);
-          analyser.connect(audioContext.destination);
-        } catch (error) {
-          console.warn("MediaElementSourceNode already connected or creation failed:", error);
-        }
-      }
-      if (audioContext?.state === "suspended") {
-        audioContext.resume();
-      }
+      ensureAudioGraph(audioElement);
+      resumeAudioGraph();
     };
 
     // Initialize on mount
@@ -55,9 +35,7 @@ const AudioWaveform = ({ width = 56, height = 56, barCount = 40, barColor = "cur
 
     // Ensure context resumes on play
     const handlePlay = () => {
-      if (audioContext?.state === "suspended") {
-        audioContext.resume();
-      }
+      resumeAudioGraph();
       if (!animationIdRef.current) {
         render();
       }
@@ -71,6 +49,7 @@ const AudioWaveform = ({ width = 56, height = 56, barCount = 40, barColor = "cur
     };
 
     const draw = () => {
+      const analyser = getAudioAnalyser();
       if (!analyser || !ctx) return;
 
       const bufferLength = analyser.frequencyBinCount;

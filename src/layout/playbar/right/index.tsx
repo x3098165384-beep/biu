@@ -48,7 +48,7 @@ const LiveDanmakuSpeechButton = () => {
 
   useEffect(() => {
     refreshSupport();
-  }, [refreshSupport]);
+  }, [liveDanmakuSpeech.provider, refreshSupport]);
 
   useEffect(() => {
     if (!isLive) {

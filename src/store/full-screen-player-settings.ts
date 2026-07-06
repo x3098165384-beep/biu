@@ -1,8 +1,10 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import {
+  defaultLiveAudioLimitSettings,
   defaultLiveDanmakuSettings,
   defaultLiveDanmakuSpeechSettings,
+  type LiveAudioLimitSettings,
   type LiveDanmakuSettings,
   type LiveDanmakuSpeechSettings,
 } from "@shared/live";
@@ -17,6 +19,7 @@ export interface FullScreenPlayerSettingsState {
   lyricsColor?: string;
   liveDanmaku: LiveDanmakuSettings;
   liveDanmakuSpeech: LiveDanmakuSpeechSettings;
+  liveAudioLimit: LiveAudioLimitSettings;
 }
 
 interface Actions {
@@ -34,6 +37,7 @@ const defaultSettings: FullScreenPlayerSettingsState = {
   lyricsColor: "#ffffff",
   liveDanmaku: defaultLiveDanmakuSettings,
   liveDanmakuSpeech: defaultLiveDanmakuSpeechSettings,
+  liveAudioLimit: defaultLiveAudioLimitSettings,
 };
 
 export const useFullScreenPlayerSettings = create<FullScreenPlayerSettingsState & Actions>()(
@@ -55,6 +59,7 @@ export const useFullScreenPlayerSettings = create<FullScreenPlayerSettingsState 
         lyricsColor: state.lyricsColor,
         liveDanmaku: state.liveDanmaku,
         liveDanmakuSpeech: state.liveDanmakuSpeech,
+        liveAudioLimit: state.liveAudioLimit,
       }),
     },
   ),

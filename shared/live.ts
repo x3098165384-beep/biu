@@ -79,9 +79,27 @@ export interface LiveDanmakuSettings {
 
 export interface LiveDanmakuSpeechSettings {
   enabled: boolean;
+  provider: "webSpeech" | "ttsServer";
   rate: number;
   volume: number;
   maxQueue: number;
+  minIntervalSeconds: number;
+  ttsServerBaseUrl: string;
+  ttsServerEngine: string;
+  ttsServerVoice: string;
+  ttsServerLocale: string;
+  pitch: number;
+  timeoutMs: number;
+  duckingEnabled: boolean;
+  duckingVolume: number;
+}
+
+export interface LiveAudioLimitSettings {
+  enabled: boolean;
+  thresholdDb: number;
+  ratio: number;
+  attack: number;
+  release: number;
 }
 
 export const defaultLiveDanmakuSettings: LiveDanmakuSettings = {
@@ -96,9 +114,27 @@ export const defaultLiveDanmakuSettings: LiveDanmakuSettings = {
 
 export const defaultLiveDanmakuSpeechSettings: LiveDanmakuSpeechSettings = {
   enabled: false,
+  provider: "ttsServer",
   rate: 1,
   volume: 1,
   maxQueue: 20,
+  minIntervalSeconds: 8,
+  ttsServerBaseUrl: "http://127.0.0.1:1233",
+  ttsServerEngine: "",
+  ttsServerVoice: "",
+  ttsServerLocale: "",
+  pitch: 100,
+  timeoutMs: 8000,
+  duckingEnabled: true,
+  duckingVolume: 0.35,
+};
+
+export const defaultLiveAudioLimitSettings: LiveAudioLimitSettings = {
+  enabled: false,
+  thresholdDb: -12,
+  ratio: 12,
+  attack: 0.003,
+  release: 0.25,
 };
 
 const formatPriority = ["fmp4", "ts", "flv"];
@@ -216,9 +252,37 @@ export const sanitizeLiveDanmakuSpeechSettings = (
 ): LiveDanmakuSpeechSettings => ({
   ...defaultLiveDanmakuSpeechSettings,
   ...settings,
+  provider: settings?.provider === "webSpeech" ? "webSpeech" : "ttsServer",
   rate: Math.min(2, Math.max(0.5, numberOrDefault(settings?.rate, defaultLiveDanmakuSpeechSettings.rate))),
   volume: Math.min(1, Math.max(0, numberOrDefault(settings?.volume, defaultLiveDanmakuSpeechSettings.volume))),
   maxQueue: Math.min(100, Math.max(1, numberOrDefault(settings?.maxQueue, defaultLiveDanmakuSpeechSettings.maxQueue))),
+  minIntervalSeconds: Math.min(
+    120,
+    Math.max(0, numberOrDefault(settings?.minIntervalSeconds, defaultLiveDanmakuSpeechSettings.minIntervalSeconds)),
+  ),
+  ttsServerBaseUrl: (settings?.ttsServerBaseUrl || defaultLiveDanmakuSpeechSettings.ttsServerBaseUrl).replace(
+    /\/$/,
+    "",
+  ),
+  ttsServerEngine: settings?.ttsServerEngine || "",
+  ttsServerVoice: settings?.ttsServerVoice || "",
+  ttsServerLocale: settings?.ttsServerLocale || "",
+  pitch: Math.min(200, Math.max(0, numberOrDefault(settings?.pitch, defaultLiveDanmakuSpeechSettings.pitch))),
+  timeoutMs: Math.min(30000, Math.max(1000, numberOrDefault(settings?.timeoutMs, defaultLiveDanmakuSpeechSettings.timeoutMs))),
+  duckingEnabled: settings?.duckingEnabled ?? defaultLiveDanmakuSpeechSettings.duckingEnabled,
+  duckingVolume: Math.min(
+    1,
+    Math.max(0, numberOrDefault(settings?.duckingVolume, defaultLiveDanmakuSpeechSettings.duckingVolume)),
+  ),
+});
+
+export const sanitizeLiveAudioLimitSettings = (settings?: Partial<LiveAudioLimitSettings>): LiveAudioLimitSettings => ({
+  ...defaultLiveAudioLimitSettings,
+  ...settings,
+  thresholdDb: Math.min(0, Math.max(-60, numberOrDefault(settings?.thresholdDb, defaultLiveAudioLimitSettings.thresholdDb))),
+  ratio: Math.min(20, Math.max(1, numberOrDefault(settings?.ratio, defaultLiveAudioLimitSettings.ratio))),
+  attack: Math.min(1, Math.max(0, numberOrDefault(settings?.attack, defaultLiveAudioLimitSettings.attack))),
+  release: Math.min(1, Math.max(0.01, numberOrDefault(settings?.release, defaultLiveAudioLimitSettings.release))),
 });
 
 export const isLiveDanmakuLineBlocked = (line: LiveDanmakuLine, blockedKeywords?: string) => {
@@ -323,6 +387,42 @@ export interface LiveDanmakuSpeechQueueItem {
   type: LiveDanmakuLineType;
   text: string;
 }
+
+export interface TtsServerParams {
+  baseUrl: string;
+  text: string;
+  engine: string;
+  voice?: string;
+  locale?: string;
+  rate: number;
+  pitch: number;
+}
+
+export const mapSpeechRateToTtsServerSpeed = (rate: number) =>
+  Math.min(100, Math.max(0, Math.round(numberOrDefault(rate, defaultLiveDanmakuSpeechSettings.rate) * 50)));
+
+export const buildTtsServerUrl = ({ baseUrl, text, engine, voice, locale, rate, pitch }: TtsServerParams) => {
+  const url = new URL(`${baseUrl.replace(/\/$/, "")}/api/tts`);
+  url.searchParams.set("text", text);
+  url.searchParams.set("engine", engine);
+  url.searchParams.set("rate", String(mapSpeechRateToTtsServerSpeed(rate)));
+  url.searchParams.set("pitch", String(Math.round(numberOrDefault(pitch, defaultLiveDanmakuSpeechSettings.pitch))));
+  if (voice) url.searchParams.set("voice", voice);
+  if (locale) url.searchParams.set("locale", locale);
+  return url.toString();
+};
+
+export const shouldSpeakLiveDanmakuLine = ({
+  line,
+  lastSpokenAt,
+  now,
+  minIntervalSeconds,
+}: {
+  line: LiveDanmakuLine;
+  lastSpokenAt: number;
+  now: number;
+  minIntervalSeconds: number;
+}) => line.type === "super_chat" || now - lastSpokenAt >= Math.max(0, minIntervalSeconds) * 1000;
 
 export const trimLiveDanmakuSpeechQueue = (
   queue: LiveDanmakuSpeechQueueItem[],

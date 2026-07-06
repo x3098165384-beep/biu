@@ -3,9 +3,12 @@ import { describe, expect, test } from "vitest";
 import { normalizeDanmakuMessage, normalizeSuperChatMessage } from "@/service/live-danmaku";
 import {
   buildLiveDanmakuCandidates,
+  buildTtsServerUrl,
   getLiveDanmakuSpeechText,
   isLiveDanmakuLineBlocked,
+  mapSpeechRateToTtsServerSpeed,
   mergeLiveDanmakuLine,
+  shouldSpeakLiveDanmakuLine,
   trimLiveDanmakuSpeechQueue,
 } from "@shared/live";
 
@@ -153,5 +156,42 @@ describe("live danmaku service", () => {
     );
 
     expect(trimmed.map(item => item.id)).toEqual(["2", "3"]);
+  });
+
+  test("maps TTS Server request params", () => {
+    const url = buildTtsServerUrl({
+      baseUrl: "http://127.0.0.1:1233/",
+      text: "hello",
+      engine: "com.google.tts",
+      voice: "zh-CN",
+      locale: "zh-CN",
+      rate: 1.2,
+      pitch: 100,
+    });
+
+    expect(url).toContain("http://127.0.0.1:1233/api/tts?");
+    expect(url).toContain("text=hello");
+    expect(url).toContain("engine=com.google.tts");
+    expect(url).toContain("voice=zh-CN");
+    expect(url).toContain("locale=zh-CN");
+    expect(url).toContain("rate=60");
+    expect(url).toContain("pitch=100");
+    expect(mapSpeechRateToTtsServerSpeed(0.5)).toBe(25);
+    expect(mapSpeechRateToTtsServerSpeed(2)).toBe(100);
+  });
+
+  test("normal speech follows interval while super chat bypasses it", () => {
+    const normal = { id: "1", type: "danmaku" as const, username: "u", text: "n", time: 1000 };
+    const superChat = { ...normal, type: "super_chat" as const };
+
+    expect(shouldSpeakLiveDanmakuLine({ line: normal, lastSpokenAt: 1000, now: 5000, minIntervalSeconds: 8 })).toBe(
+      false,
+    );
+    expect(shouldSpeakLiveDanmakuLine({ line: normal, lastSpokenAt: 1000, now: 9000, minIntervalSeconds: 8 })).toBe(
+      true,
+    );
+    expect(shouldSpeakLiveDanmakuLine({ line: superChat, lastSpokenAt: 1000, now: 2000, minIntervalSeconds: 8 })).toBe(
+      true,
+    );
   });
 });

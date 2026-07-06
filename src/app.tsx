@@ -9,7 +9,9 @@ import { toggleMiniMode } from "./common/utils/mini-player";
 import { mapKeyToElectronAccelerator } from "./common/utils/shortcut";
 import Theme from "./components/theme";
 import routes from "./routes";
+import { applyLiveAudioLimit } from "./service/audio-graph";
 import { useAppUpdateStore } from "./store/app-update";
+import { useFullScreenPlayerSettings } from "./store/full-screen-player-settings";
 import { usePlayList } from "./store/play-list";
 import { usePlayProgress } from "./store/play-progress";
 import { useShortcutSettings } from "./store/shortcuts";
@@ -28,6 +30,13 @@ export function App() {
 
   useEffect(() => {
     getCookitFromBSite();
+  }, []);
+
+  useEffect(() => {
+    applyLiveAudioLimit(useFullScreenPlayerSettings.getState().liveAudioLimit);
+    return useFullScreenPlayerSettings.subscribe(state => {
+      applyLiveAudioLimit(state.liveAudioLimit);
+    });
   }, []);
 
   useEffect(() => {

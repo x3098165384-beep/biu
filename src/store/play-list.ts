@@ -13,12 +13,14 @@ import { getAudioUrl, getDashUrl, isUrlValid } from "@/common/utils/audio";
 import { beginPlayReport, endPlayReport, reportHeartbeat } from "@/common/utils/play-report";
 import { stripHtml } from "@/common/utils/str";
 import { formatUrlProtocol } from "@/common/utils/url";
+import { applyLiveAudioLimit, ensureAudioGraph, resumeAudioGraph } from "@/service/audio-graph";
 import { getAudioSongInfo } from "@/service/audio-song-info";
 import { getLiveAudioPlayUrl, getLiveRoomInfo, LiveStatus } from "@/service/live-room";
 import { getWebInterfaceView } from "@/service/web-interface-view";
 import type { LiveAudioCandidate } from "@shared/live";
 
 import { usePlayProgress } from "./play-progress";
+import { useFullScreenPlayerSettings } from "./full-screen-player-settings";
 
 export type PlayDataType = "mv" | "audio" | "live";
 
@@ -400,12 +402,16 @@ const updatePlaybackState = () => {
 
 const playAudioSafely = async () => {
   try {
+    ensureAudioGraph(audio);
+    resumeAudioGraph();
     await audio.play();
   } catch (error) {
     if ((error as DOMException)?.name === "NotSupportedError") {
       const refreshed = await refreshCurrentAudioSource();
       if (refreshed) {
         try {
+          ensureAudioGraph(audio);
+          resumeAudioGraph();
           await audio.play();
           return;
         } catch (retryError) {
@@ -610,6 +616,8 @@ export const usePlayList = create<State & Action>()(
         list: [],
         init: async () => {
           if (audio) {
+            ensureAudioGraph(audio);
+            applyLiveAudioLimit(useFullScreenPlayerSettings.getState().liveAudioLimit);
             audio.volume = get().volume;
             audio.muted = get().isMuted;
             audio.playbackRate = get().rate;
