@@ -5,16 +5,12 @@ import { RiTBoxLine } from "@remixicon/react";
 import clsx from "classnames";
 import { debounce } from "es-toolkit";
 
-import { connectLiveDanmaku, type LiveDanmakuConnection, type LiveDanmakuLine } from "@/service/live-danmaku";
-import {
-  defaultLiveDanmakuSettings,
-  mergeLiveDanmakuLine,
-  splitBlockedKeywords,
-  type LiveDanmakuSettings,
-} from "@shared/live";
+import type { LiveDanmakuLine } from "@/service/live-danmaku";
+import { defaultLiveDanmakuSettings } from "@shared/live";
 import type { WebPlayerParams } from "@/service/web-player";
 
 import { useFullScreenPlayerSettings } from "@/store/full-screen-player-settings";
+import { useLiveDanmaku, useLiveDanmakuConsumer } from "@/store/live-danmaku";
 import { usePlayList } from "@/store/play-list";
 import { usePlayProgress } from "@/store/play-progress";
 import { StoreNameMap } from "@shared/store";
@@ -43,27 +39,32 @@ const Lyrics = ({ color, centered, showControls }: { color?: string; centered?: 
   const containerRef = useRef<HTMLDivElement | null>(null);
   const rafIdRef = useRef<number | null>(null);
   const lineRefs = useRef<Record<number, HTMLDivElement | null>>({});
-  const liveConnectionRef = useRef<LiveDanmakuConnection | null>(null);
-  const liveRateLimitRef = useRef({ second: 0, count: 0 });
-  const liveDanmakuSettingsRef = useRef<LiveDanmakuSettings>(defaultLiveDanmakuSettings);
   const [centerPadding, setCenterPadding] = useState(0);
   const playId = usePlayList(s => s.playId);
   const playItem = usePlayList(s => s.list.find(item => item.id === s.playId));
   const liveDanmakuSettings = useFullScreenPlayerSettings(s => s.liveDanmaku || defaultLiveDanmakuSettings);
+  const sharedLiveLines = useLiveDanmaku(s => s.lines);
+  const sharedLiveStatus = useLiveDanmaku(s => s.status);
   const [lyrics, setLyrics] = useState<LyricLine[]>([]);
   const [translatedLyrics, setTranslatedLyrics] = useState<LyricLine[]>([]);
-  const [liveLines, setLiveLines] = useState<LiveDanmakuLine[]>([]);
-  const [liveStatus, setLiveStatus] = useState<"disabled" | "connecting" | "connected" | "error">("connecting");
   const [offset, setOffset] = useState<number>(DEFAULT_OFFSET);
   const [fontSize, setFontSize] = useState<number>(DEFAULT_FONT_SIZE);
   const [isLoading, setIsLoading] = useState(false);
   const { currentTime } = usePlayProgress();
   const currentMs = currentTime * 1000 + offset;
   const isLiveLyrics = playItem?.type === "live" && Boolean(playItem.roomId);
-
-  useEffect(() => {
-    liveDanmakuSettingsRef.current = liveDanmakuSettings;
-  }, [liveDanmakuSettings]);
+  const liveLines = useMemo(
+    () =>
+      liveDanmakuSettings.enabled
+        ? sharedLiveLines.filter(line => line.type !== "super_chat" || liveDanmakuSettings.showSuperChat)
+        : [],
+    [liveDanmakuSettings.enabled, liveDanmakuSettings.showSuperChat, sharedLiveLines],
+  );
+  const liveStatus = !liveDanmakuSettings.enabled
+    ? "disabled"
+    : sharedLiveStatus === "idle"
+      ? "connecting"
+      : sharedLiveStatus;
 
   const {
     isOpen: isSearchOpen,
@@ -110,44 +111,6 @@ const Lyrics = ({ color, centered, showControls }: { color?: string; centered?: 
     return store[`${playItem.bvid}-${playItem.cid}`] ?? null;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [playId]);
-
-  const sanitizeLiveDanmakuSettings = useCallback(
-    (settings: LiveDanmakuSettings) => ({
-      ...defaultLiveDanmakuSettings,
-      ...settings,
-      maxLines: Math.min(200, Math.max(20, Number(settings.maxLines) || defaultLiveDanmakuSettings.maxLines)),
-      maxPerSecond: Math.min(30, Math.max(1, Number(settings.maxPerSecond) || defaultLiveDanmakuSettings.maxPerSecond)),
-      duplicateWindowSeconds: Math.min(60, Math.max(0, Number(settings.duplicateWindowSeconds) || 0)),
-    }),
-    [],
-  );
-
-  const processLiveLine = useCallback(
-    (line: LiveDanmakuLine) => {
-      const settings = sanitizeLiveDanmakuSettings(liveDanmakuSettingsRef.current);
-      if (!settings.enabled) return;
-      if (line.type === "super_chat" && !settings.showSuperChat) return;
-
-      const blockedKeywords = splitBlockedKeywords(settings.blockedKeywords);
-      if (blockedKeywords.some(keyword => line.text.includes(keyword) || line.username.includes(keyword))) {
-        return;
-      }
-
-      if (line.type !== "super_chat") {
-        const second = Math.floor(Date.now() / 1000);
-        if (liveRateLimitRef.current.second !== second) {
-          liveRateLimitRef.current = { second, count: 0 };
-        }
-        if (liveRateLimitRef.current.count >= settings.maxPerSecond) {
-          return;
-        }
-        liveRateLimitRef.current.count += 1;
-      }
-
-      setLiveLines(prev => mergeLiveDanmakuLine(prev, line, settings));
-    },
-    [sanitizeLiveDanmakuSettings],
-  );
 
   useEffect(() => {
     let canceled = false;
@@ -236,56 +199,11 @@ const Lyrics = ({ color, centered, showControls }: { color?: string; centered?: 
     };
   }, [isLiveLyrics, parseLrc, playId, tryLoadCachedLyrics]);
 
-  useEffect(() => {
-    liveConnectionRef.current?.close();
-    liveConnectionRef.current = null;
-    setLiveLines([]);
-
-    if (!isLiveLyrics || !playItem?.roomId) {
-      setLiveStatus("connecting");
-      return;
-    }
-
-    if (!liveDanmakuSettings.enabled) {
-      setLiveStatus("disabled");
-      return;
-    }
-
-    let canceled = false;
-    setLiveStatus("connecting");
-
-    void connectLiveDanmaku(playItem.roomId, {
-      onOpen: () => {
-        if (!canceled) setLiveStatus("connected");
-      },
-      onMessage: line => {
-        if (canceled) return;
-        processLiveLine(line);
-      },
-      onError: () => {
-        if (!canceled) setLiveStatus("error");
-      },
-      onClose: () => {
-        if (!canceled) setLiveStatus("error");
-      },
-    })
-      .then(connection => {
-        if (canceled) {
-          connection.close();
-          return;
-        }
-        liveConnectionRef.current = connection;
-      })
-      .catch(() => {
-        if (!canceled) setLiveStatus("error");
-      });
-
-    return () => {
-      canceled = true;
-      liveConnectionRef.current?.close();
-      liveConnectionRef.current = null;
-    };
-  }, [isLiveLyrics, liveDanmakuSettings.enabled, playItem?.roomId, processLiveLine]);
+  useLiveDanmakuConsumer({
+    roomId: playItem?.roomId || 0,
+    consumerId: "lyrics",
+    enabled: Boolean(isLiveLyrics && liveDanmakuSettings.enabled && playItem?.roomId),
+  });
 
   const translationMap = useMemo(() => {
     if (!translatedLyrics?.length) return new Map<number, string>();

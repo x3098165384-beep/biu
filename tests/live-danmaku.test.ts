@@ -1,7 +1,13 @@
 import { describe, expect, test } from "vitest";
 
 import { normalizeDanmakuMessage, normalizeSuperChatMessage } from "@/service/live-danmaku";
-import { buildLiveDanmakuCandidates, mergeLiveDanmakuLine } from "@shared/live";
+import {
+  buildLiveDanmakuCandidates,
+  getLiveDanmakuSpeechText,
+  isLiveDanmakuLineBlocked,
+  mergeLiveDanmakuLine,
+  trimLiveDanmakuSpeechQueue,
+} from "@shared/live";
 
 describe("live danmaku service", () => {
   test("normalizes DANMU_MSG", () => {
@@ -91,5 +97,61 @@ describe("live danmaku service", () => {
         address: "wss://b.chat.bilibili.com:2245/sub",
       },
     ]);
+  });
+
+  test("builds speech text without username or super chat price", () => {
+    expect(
+      getLiveDanmakuSpeechText({
+        id: "1",
+        type: "danmaku",
+        username: "user",
+        text: "hello",
+        time: 1000,
+      }),
+    ).toBe("hello");
+
+    expect(
+      getLiveDanmakuSpeechText({
+        id: "2",
+        type: "super_chat",
+        username: "sc-user",
+        text: "support",
+        price: 30,
+        time: 1000,
+      }),
+    ).toBe("SC，support");
+  });
+
+  test("blocks speech candidate by configured keywords", () => {
+    const line = { id: "1", type: "danmaku" as const, username: "user", text: "hello blocked", time: 1000 };
+
+    expect(isLiveDanmakuLineBlocked(line, "blocked")).toBe(true);
+    expect(isLiveDanmakuLineBlocked(line, "other")).toBe(false);
+  });
+
+  test("speech queue drops oldest normal danmaku before super chat", () => {
+    const trimmed = trimLiveDanmakuSpeechQueue(
+      [
+        { id: "1", type: "danmaku", text: "normal-1" },
+        { id: "2", type: "super_chat", text: "SC，support" },
+        { id: "3", type: "danmaku", text: "normal-2" },
+      ],
+      2,
+    );
+
+    expect(trimmed.map(item => item.id)).toEqual(["2", "3"]);
+  });
+
+  test("speech queue keeps latest messages when every item is super chat", () => {
+    const trimmed = trimLiveDanmakuSpeechQueue(
+      [
+        { id: "1", type: "super_chat", text: "SC，one" },
+        { id: "2", type: "super_chat", text: "SC，two" },
+        { id: "3", type: "super_chat", text: "SC，three" },
+      ],
+      2,
+    );
+
+    expect(trimmed.map(item => item.id)).toEqual(["2", "3"]);
   });
 });

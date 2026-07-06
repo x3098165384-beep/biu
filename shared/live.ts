@@ -77,6 +77,13 @@ export interface LiveDanmakuSettings {
   blockedKeywords: string;
 }
 
+export interface LiveDanmakuSpeechSettings {
+  enabled: boolean;
+  rate: number;
+  volume: number;
+  maxQueue: number;
+}
+
 export const defaultLiveDanmakuSettings: LiveDanmakuSettings = {
   enabled: true,
   showUsername: false,
@@ -85,6 +92,13 @@ export const defaultLiveDanmakuSettings: LiveDanmakuSettings = {
   maxPerSecond: 8,
   duplicateWindowSeconds: 12,
   blockedKeywords: "",
+};
+
+export const defaultLiveDanmakuSpeechSettings: LiveDanmakuSpeechSettings = {
+  enabled: false,
+  rate: 1,
+  volume: 1,
+  maxQueue: 20,
 };
 
 const formatPriority = ["fmp4", "ts", "flv"];
@@ -175,6 +189,43 @@ export const splitBlockedKeywords = (value?: string) =>
     .map(item => item.trim())
     .filter(Boolean);
 
+const numberOrDefault = (value: unknown, fallback: number) => {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : fallback;
+};
+
+export const sanitizeLiveDanmakuSettings = (settings?: Partial<LiveDanmakuSettings>): LiveDanmakuSettings => ({
+  ...defaultLiveDanmakuSettings,
+  ...settings,
+  maxLines: Math.min(200, Math.max(20, numberOrDefault(settings?.maxLines, defaultLiveDanmakuSettings.maxLines))),
+  maxPerSecond: Math.min(
+    30,
+    Math.max(1, numberOrDefault(settings?.maxPerSecond, defaultLiveDanmakuSettings.maxPerSecond)),
+  ),
+  duplicateWindowSeconds: Math.min(
+    60,
+    Math.max(
+      0,
+      numberOrDefault(settings?.duplicateWindowSeconds, defaultLiveDanmakuSettings.duplicateWindowSeconds),
+    ),
+  ),
+});
+
+export const sanitizeLiveDanmakuSpeechSettings = (
+  settings?: Partial<LiveDanmakuSpeechSettings>,
+): LiveDanmakuSpeechSettings => ({
+  ...defaultLiveDanmakuSpeechSettings,
+  ...settings,
+  rate: Math.min(2, Math.max(0.5, numberOrDefault(settings?.rate, defaultLiveDanmakuSpeechSettings.rate))),
+  volume: Math.min(1, Math.max(0, numberOrDefault(settings?.volume, defaultLiveDanmakuSpeechSettings.volume))),
+  maxQueue: Math.min(100, Math.max(1, numberOrDefault(settings?.maxQueue, defaultLiveDanmakuSpeechSettings.maxQueue))),
+});
+
+export const isLiveDanmakuLineBlocked = (line: LiveDanmakuLine, blockedKeywords?: string) => {
+  const keywords = splitBlockedKeywords(blockedKeywords);
+  return keywords.some(keyword => line.text.includes(keyword) || line.username.includes(keyword));
+};
+
 export const buildLiveDanmakuCandidates = (hostList?: LiveDanmakuHostInfo[]): LiveDanmakuCandidate[] => {
   const seen = new Set<string>();
   const candidates: LiveDanmakuCandidate[] = [];
@@ -222,4 +273,68 @@ export const mergeLiveDanmakuLine = (
   }
 
   return [...lines, incoming].slice(-settings.maxLines);
+};
+
+export const appendLiveDanmakuLine = (
+  lines: LiveDanmakuLine[],
+  incoming: LiveDanmakuLine,
+  settings: Pick<LiveDanmakuSettings, "duplicateWindowSeconds" | "maxLines">,
+) => {
+  const duplicateWindowMs = Math.max(0, settings.duplicateWindowSeconds) * 1000;
+  if (duplicateWindowMs > 0) {
+    const duplicateIndex = lines.findLastIndex(
+      line =>
+        line.type === incoming.type && line.text === incoming.text && incoming.time - line.time <= duplicateWindowMs,
+    );
+
+    if (duplicateIndex !== -1) {
+      const next = [...lines];
+      const duplicate = next.splice(duplicateIndex, 1)[0];
+      const foldedLine = {
+        ...duplicate,
+        id: incoming.id,
+        time: incoming.time,
+        repeatCount: (duplicate.repeatCount || 1) + 1,
+      };
+      next.push(foldedLine);
+      return {
+        lines: next.slice(-settings.maxLines),
+        line: foldedLine,
+        isNew: false,
+        folded: true,
+      };
+    }
+  }
+
+  const nextLine = { ...incoming };
+  return {
+    lines: [...lines, nextLine].slice(-settings.maxLines),
+    line: nextLine,
+    isNew: true,
+    folded: false,
+  };
+};
+
+export const getLiveDanmakuSpeechText = (line: LiveDanmakuLine) =>
+  line.type === "super_chat" ? `SC，${line.text}` : line.text;
+
+export interface LiveDanmakuSpeechQueueItem {
+  id: string;
+  type: LiveDanmakuLineType;
+  text: string;
+}
+
+export const trimLiveDanmakuSpeechQueue = (
+  queue: LiveDanmakuSpeechQueueItem[],
+  maxQueue = defaultLiveDanmakuSpeechSettings.maxQueue,
+) => {
+  const limit = Math.max(1, maxQueue);
+  const next = [...queue];
+
+  while (next.length > limit) {
+    const normalIndex = next.findIndex(item => item.type === "danmaku");
+    next.splice(normalIndex === -1 ? 0 : normalIndex, 1);
+  }
+
+  return next;
 };
