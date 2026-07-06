@@ -4,10 +4,12 @@ import { normalizeDanmakuMessage, normalizeSuperChatMessage } from "@/service/li
 import {
   buildLiveDanmakuCandidates,
   buildTtsServerUrl,
+  defaultLiveDanmakuSpeechSettings,
   getLiveDanmakuSpeechText,
   isLiveDanmakuLineBlocked,
   mapSpeechRateToTtsServerSpeed,
   mergeLiveDanmakuLine,
+  sanitizeLiveDanmakuSpeechSettings,
   shouldSpeakLiveDanmakuLine,
   trimLiveDanmakuSpeechQueue,
 } from "@shared/live";
@@ -123,6 +125,30 @@ describe("live danmaku service", () => {
         time: 1000,
       }),
     ).toBe("SC，support");
+  });
+
+  test("defaults live speech to Windows system voices", () => {
+    const settings = sanitizeLiveDanmakuSpeechSettings();
+
+    expect(settings.provider).toBe("windowsSystem");
+    expect(settings.windowsTtsVoiceId).toBe("");
+    expect(defaultLiveDanmakuSpeechSettings.provider).toBe("windowsSystem");
+  });
+
+  test("sanitizes legacy speech providers without dropping Windows voice selection", () => {
+    expect(sanitizeLiveDanmakuSpeechSettings({ provider: "webSpeech" }).provider).toBe("webSpeech");
+    expect(sanitizeLiveDanmakuSpeechSettings({ provider: "ttsServer" }).provider).toBe("ttsServer");
+    expect(
+      sanitizeLiveDanmakuSpeechSettings({
+        provider: "windowsSystem",
+        windowsTtsVoiceId: "voice-id",
+        windowsTtsVoiceName: "晓晓",
+      }),
+    ).toMatchObject({
+      provider: "windowsSystem",
+      windowsTtsVoiceId: "voice-id",
+      windowsTtsVoiceName: "晓晓",
+    });
   });
 
   test("blocks speech candidate by configured keywords", () => {

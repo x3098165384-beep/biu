@@ -5,6 +5,7 @@ import {
   getTtsServerEngineValue,
   getTtsServerVoiceLabel,
   getTtsServerVoiceValue,
+  getWindowsTtsVoiceLabel,
 } from "@/store/live-danmaku-speech";
 import { buildTtsServerUrl } from "@shared/live";
 
@@ -55,5 +56,15 @@ describe("live danmaku speech TTS Server helpers", () => {
     expect(url).toContain("engine=microsoft");
     expect(url).toContain("voice=zh-CN-XiaoxiaoNeural");
     expect(url).toContain("locale=zh-CN");
+  });
+
+  test("labels Windows system voices with language", () => {
+    expect(
+      getWindowsTtsVoiceLabel({
+        id: "voice-id",
+        name: "Microsoft Xiaoxiao",
+        language: "zh-CN",
+      }),
+    ).toBe("Microsoft Xiaoxiao (zh-CN)");
   });
 });

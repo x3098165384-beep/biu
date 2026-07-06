@@ -79,11 +79,13 @@ export interface LiveDanmakuSettings {
 
 export interface LiveDanmakuSpeechSettings {
   enabled: boolean;
-  provider: "webSpeech" | "ttsServer";
+  provider: "windowsSystem" | "webSpeech" | "ttsServer";
   rate: number;
   volume: number;
   maxQueue: number;
   minIntervalSeconds: number;
+  windowsTtsVoiceId: string;
+  windowsTtsVoiceName: string;
   ttsServerBaseUrl: string;
   ttsServerEngine: string;
   ttsServerVoice: string;
@@ -114,11 +116,13 @@ export const defaultLiveDanmakuSettings: LiveDanmakuSettings = {
 
 export const defaultLiveDanmakuSpeechSettings: LiveDanmakuSpeechSettings = {
   enabled: false,
-  provider: "ttsServer",
+  provider: "windowsSystem",
   rate: 1,
   volume: 1,
   maxQueue: 20,
   minIntervalSeconds: 8,
+  windowsTtsVoiceId: "",
+  windowsTtsVoiceName: "",
   ttsServerBaseUrl: "http://127.0.0.1:1233",
   ttsServerEngine: "",
   ttsServerVoice: "",
@@ -252,7 +256,8 @@ export const sanitizeLiveDanmakuSpeechSettings = (
 ): LiveDanmakuSpeechSettings => ({
   ...defaultLiveDanmakuSpeechSettings,
   ...settings,
-  provider: settings?.provider === "webSpeech" ? "webSpeech" : "ttsServer",
+  provider:
+    settings?.provider === "webSpeech" || settings?.provider === "ttsServer" ? settings.provider : "windowsSystem",
   rate: Math.min(2, Math.max(0.5, numberOrDefault(settings?.rate, defaultLiveDanmakuSpeechSettings.rate))),
   volume: Math.min(1, Math.max(0, numberOrDefault(settings?.volume, defaultLiveDanmakuSpeechSettings.volume))),
   maxQueue: Math.min(100, Math.max(1, numberOrDefault(settings?.maxQueue, defaultLiveDanmakuSpeechSettings.maxQueue))),
@@ -260,6 +265,8 @@ export const sanitizeLiveDanmakuSpeechSettings = (
     120,
     Math.max(0, numberOrDefault(settings?.minIntervalSeconds, defaultLiveDanmakuSpeechSettings.minIntervalSeconds)),
   ),
+  windowsTtsVoiceId: settings?.windowsTtsVoiceId || "",
+  windowsTtsVoiceName: settings?.windowsTtsVoiceName || "",
   ttsServerBaseUrl: (settings?.ttsServerBaseUrl || defaultLiveDanmakuSpeechSettings.ttsServerBaseUrl).replace(
     /\/$/,
     "",

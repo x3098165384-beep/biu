@@ -10,6 +10,7 @@ import { registerLiveHandlers } from "./live";
 import { registerLyricsHandlers } from "./lyrics";
 import { registerShortcutHandlers } from "./shortcut";
 import { registerStoreHandlers } from "./store";
+import { registerTtsHandlers } from "./tts";
 import { registerWindowHandlers } from "./window";
 
 export function registerIpcHandlers(props: IpcHandlerProps) {
@@ -24,4 +25,5 @@ export function registerIpcHandlers(props: IpcHandlerProps) {
   registerLyricsHandlers();
   registerLocalMusicHandlers();
   registerLiveHandlers();
+  registerTtsHandlers();
 }

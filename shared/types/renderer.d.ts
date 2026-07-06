@@ -48,6 +48,27 @@ declare global {
     message?: string;
   }
 
+  interface WindowsTtsVoice {
+    id: string;
+    name: string;
+    language: string;
+    gender?: string;
+    description?: string;
+  }
+
+  interface WindowsTtsAudio {
+    audioBase64: string;
+    mimeType: string;
+  }
+
+  interface WindowsTtsRequest {
+    text: string;
+    voiceId?: string;
+    rate?: number;
+    volume?: number;
+    pitch?: number;
+  }
+
   interface ElectronAPI {
     /** 获取指定name的存储值 */
     getStore: <N extends StoreName>(name: N) => Promise<StoreDataMap[N] | undefined>;
@@ -89,6 +110,10 @@ declare global {
     onLiveDanmakuMessage: (cb: (line: LiveDanmakuLine) => void) => VoidFunction;
     /** 监听直播弹幕连接状态 */
     onLiveDanmakuStatus: (cb: (payload: LiveDanmakuStatusPayload) => void) => VoidFunction;
+    /** 获取 Windows 系统语音 */
+    listWindowsTtsVoices: () => Promise<WindowsTtsVoice[]>;
+    /** 使用 Windows 系统语音合成音频 */
+    synthesizeWindowsTts: (request: WindowsTtsRequest) => Promise<WindowsTtsAudio>;
     /** 获取当前应用平台：macos | windows | linux */
     getPlatform: () => AppPlatForm;
     /** 更新网络代理设置 */

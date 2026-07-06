@@ -44,6 +44,10 @@ export const channel = {
     danmakuMessage: "live:danmaku-message",
     danmakuStatus: "live:danmaku-status",
   },
+  tts: {
+    listWindowsVoices: "tts:list-windows-voices",
+    synthesizeWindows: "tts:synthesize-windows",
+  },
   router: {
     navigate: "router:navigate",
   },

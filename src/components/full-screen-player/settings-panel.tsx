@@ -8,12 +8,14 @@ import { isHex } from "@/common/utils/color";
 import ColorPicker from "@/components/color-picker";
 import { useFullScreenPlayerSettings } from "@/store/full-screen-player-settings";
 import {
+  fetchWindowsTtsVoices,
   fetchTtsServerEngines,
   fetchTtsServerVoices,
   getTtsServerEngineLabel,
   getTtsServerEngineValue,
   getTtsServerVoiceLabel,
   getTtsServerVoiceValue,
+  getWindowsTtsVoiceLabel,
   useLiveDanmakuSpeech,
 } from "@/store/live-danmaku-speech";
 import { usePlayList } from "@/store/play-list";
@@ -107,6 +109,7 @@ const FullScreenPlayerSettingsPanel = ({ isUiVisible = true }: { isUiVisible?: b
   const [backgroundPickerOpen, setBackgroundPickerOpen] = useState(false);
   const [ttsEngines, setTtsEngines] = useState<any[]>([]);
   const [ttsVoices, setTtsVoices] = useState<any[]>([]);
+  const [windowsVoices, setWindowsVoices] = useState<WindowsTtsVoice[]>([]);
   const [ttsLoading, setTtsLoading] = useState(false);
 
   useEffect(() => {
@@ -185,9 +188,37 @@ const FullScreenPlayerSettingsPanel = ({ isUiVisible = true }: { isUiVisible?: b
     }
   };
 
+  const loadWindowsTtsVoices = async () => {
+    setTtsLoading(true);
+    try {
+      const voices = await fetchWindowsTtsVoices();
+      setWindowsVoices(voices);
+      const voice = voices.find(item => item.id === speechSettings.windowsTtsVoiceId) || voices[0];
+      if (voice && !speechSettings.windowsTtsVoiceId) {
+        updateLiveDanmakuSpeech({ windowsTtsVoiceId: voice.id, windowsTtsVoiceName: voice.name });
+      }
+      addToast({ color: "success", title: "系统语音已刷新" });
+    } catch {
+      addToast({ color: "danger", title: "系统语音刷新失败" });
+    } finally {
+      setTtsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (isLive && speechSettings.provider === "windowsSystem" && !windowsVoices.length) {
+      void loadWindowsTtsVoices();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isLive, speechSettings.provider]);
+
   const testSpeech = () => {
     if (speechSettings.provider === "ttsServer" && !speechSettings.ttsServerEngine) {
       addToast({ color: "warning", title: "请先刷新并选择 TTS 引擎" });
+      return;
+    }
+    if (speechSettings.provider === "windowsSystem" && !speechSettings.windowsTtsVoiceId && !windowsVoices.length) {
+      addToast({ color: "warning", title: "请先刷新系统语音" });
       return;
     }
     updateLiveDanmakuSpeech({ enabled: true });
@@ -313,10 +344,44 @@ const FullScreenPlayerSettingsPanel = ({ isUiVisible = true }: { isUiVisible?: b
               value={speechSettings.provider}
               onChange={event => updateLiveDanmakuSpeech({ provider: event.target.value as any })}
             >
+              <option value="windowsSystem">Windows 系统语音</option>
               <option value="ttsServer">TTS Server</option>
-              <option value="webSpeech">系统语音</option>
+              <option value="webSpeech">浏览器系统语音</option>
             </select>
           </div>
+          {speechSettings.provider === "windowsSystem" && (
+            <div className="space-y-2">
+              <div className="flex items-center justify-between gap-4">
+                <div className="text-medium">语音</div>
+                <div className="flex items-center gap-2">
+                  <select
+                    className="border-default bg-content1 w-48 rounded border px-2 py-1 outline-none"
+                    value={speechSettings.windowsTtsVoiceId}
+                    onChange={event => {
+                      const voice = windowsVoices.find(item => item.id === event.target.value);
+                      updateLiveDanmakuSpeech({
+                        windowsTtsVoiceId: event.target.value,
+                        windowsTtsVoiceName: voice?.name || "",
+                      });
+                    }}
+                  >
+                    <option value="">自动选择中文语音</option>
+                    {windowsVoices.map(voice => (
+                      <option key={voice.id} value={voice.id}>
+                        {getWindowsTtsVoiceLabel(voice)}
+                      </option>
+                    ))}
+                  </select>
+                  <Button size="sm" variant="flat" isLoading={ttsLoading} onPress={loadWindowsTtsVoices}>
+                    刷新
+                  </Button>
+                </div>
+              </div>
+              {!windowsVoices.length && (
+                <div className="text-foreground-500 text-small">如果没有晓晓/云希，先把离线语音包装进 Windows 后再刷新。</div>
+              )}
+            </div>
+          )}
           {speechSettings.provider === "ttsServer" && (
             <>
               <div className="flex items-center justify-between gap-4">

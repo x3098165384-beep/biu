@@ -34,6 +34,8 @@ const api: ElectronAPI = {
     ipcRenderer.on(channel.live.danmakuStatus, handler);
     return () => ipcRenderer.removeListener(channel.live.danmakuStatus, handler);
   },
+  listWindowsTtsVoices: () => ipcRenderer.invoke(channel.tts.listWindowsVoices),
+  synthesizeWindowsTts: request => ipcRenderer.invoke(channel.tts.synthesizeWindows, request),
   setProxySettings: proxySettings => ipcRenderer.invoke(channel.app.setProxySettings, proxySettings),
   scanLocalMusic: dirs => ipcRenderer.invoke(channel.localMusic.scan, dirs),
   deleteLocalMusicFile: filePath => ipcRenderer.invoke(channel.localMusic.deleteFile, filePath),
