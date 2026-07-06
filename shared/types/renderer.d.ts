@@ -69,6 +69,38 @@ declare global {
     pitch?: number;
   }
 
+  interface SapiTtsVoice {
+    id: string;
+    name: string;
+    culture: string;
+    gender?: string;
+    description?: string;
+  }
+
+  interface SapiTtsRequest {
+    text: string;
+    voiceId?: string;
+    rate?: number;
+    volume?: number;
+  }
+
+  interface LocalNaturalVoice {
+    engine: string;
+    code: string;
+    name: string;
+    desc: string;
+    sampleRate?: number;
+    folder: string;
+    manifestPath: string;
+    sapiVoiceId?: string;
+    installed: boolean;
+  }
+
+  interface NaturalVoiceAdapterInstallResult {
+    adapterDir: string;
+    installed: boolean;
+  }
+
   interface ElectronAPI {
     /** 获取指定name的存储值 */
     getStore: <N extends StoreName>(name: N) => Promise<StoreDataMap[N] | undefined>;
@@ -114,6 +146,14 @@ declare global {
     listWindowsTtsVoices: () => Promise<WindowsTtsVoice[]>;
     /** 使用 Windows 系统语音合成音频 */
     synthesizeWindowsTts: (request: WindowsTtsRequest) => Promise<WindowsTtsAudio>;
+    /** 获取 SAPI 语音 */
+    listSapiTtsVoices: () => Promise<SapiTtsVoice[]>;
+    /** 使用 SAPI 语音合成音频 */
+    synthesizeSapiTts: (request: SapiTtsRequest) => Promise<WindowsTtsAudio>;
+    /** 解析本地自然语音包目录 */
+    parseNaturalVoicePackage: (dir: string) => Promise<LocalNaturalVoice[]>;
+    /** 安装/配置 NaturalVoiceSAPIAdapter */
+    installNaturalVoiceAdapter: (voicePackageDir: string) => Promise<NaturalVoiceAdapterInstallResult>;
     /** 获取当前应用平台：macos | windows | linux */
     getPlatform: () => AppPlatForm;
     /** 更新网络代理设置 */

@@ -130,7 +130,7 @@ const speakWithWebSpeech = (item: LiveDanmakuSpeechQueueItem, settings: LiveDanm
   const utterance = new SpeechSynthesisUtterance(item.text);
   utterance.lang = "zh-CN";
   utterance.rate = settings.rate;
-  utterance.volume = settings.volume;
+  utterance.volume = Math.min(1, settings.volume);
   if (!selectedVoice) selectVoice();
   if (selectedVoice) utterance.voice = selectedVoice;
 
@@ -161,21 +161,7 @@ const speakWithTtsServer = async (item: LiveDanmakuSpeechQueueItem, settings: Li
     const response = await fetch(url, { method: "GET", signal: controller.signal });
     if (!response.ok) throw new Error(await response.text());
 
-    const blobUrl = URL.createObjectURL(await response.blob());
-    httpAudioUrl = blobUrl;
-    httpAudio = new Audio(blobUrl);
-    httpAudio.volume = settings.volume;
-    httpAudio.onended = () => {
-      URL.revokeObjectURL(blobUrl);
-      httpAudioUrl = null;
-      finishCurrent();
-    };
-    httpAudio.onerror = () => {
-      URL.revokeObjectURL(blobUrl);
-      httpAudioUrl = null;
-      finishCurrent();
-    };
-    await httpAudio.play();
+    await playAudioBlob(await response.blob(), settings.volume);
   } catch {
     finishCurrent();
   } finally {
@@ -183,23 +169,50 @@ const speakWithTtsServer = async (item: LiveDanmakuSpeechQueueItem, settings: Li
   }
 };
 
-const playAudioBase64 = async ({ audioBase64, mimeType }: WindowsTtsAudio, volume: number) => {
-  const bytes = Uint8Array.from(atob(audioBase64), char => char.charCodeAt(0));
-  const blobUrl = URL.createObjectURL(new Blob([bytes], { type: mimeType || "audio/wav" }));
+let ttsAudioContext: AudioContext | null = null;
+let ttsAudioSource: MediaElementAudioSourceNode | null = null;
+let ttsGainNode: GainNode | null = null;
+
+const cleanupHttpAudio = () => {
+  if (httpAudioUrl) {
+    URL.revokeObjectURL(httpAudioUrl);
+    httpAudioUrl = null;
+  }
+  ttsAudioSource?.disconnect();
+  ttsGainNode?.disconnect();
+  ttsAudioSource = null;
+  ttsGainNode = null;
+};
+
+const playAudioBlob = async (blob: Blob, volume: number) => {
+  cleanupHttpAudio();
+  const blobUrl = URL.createObjectURL(blob);
   httpAudioUrl = blobUrl;
   httpAudio = new Audio(blobUrl);
-  httpAudio.volume = volume;
+  httpAudio.volume = 1;
+  ttsAudioContext ||= new AudioContext();
+  if (ttsAudioContext.state === "suspended") {
+    await ttsAudioContext.resume();
+  }
+  ttsAudioSource = ttsAudioContext.createMediaElementSource(httpAudio);
+  ttsGainNode = ttsAudioContext.createGain();
+  ttsGainNode.gain.value = volume;
+  ttsAudioSource.connect(ttsGainNode);
+  ttsGainNode.connect(ttsAudioContext.destination);
   httpAudio.onended = () => {
-    URL.revokeObjectURL(blobUrl);
-    httpAudioUrl = null;
+    cleanupHttpAudio();
     finishCurrent();
   };
   httpAudio.onerror = () => {
-    URL.revokeObjectURL(blobUrl);
-    httpAudioUrl = null;
+    cleanupHttpAudio();
     finishCurrent();
   };
   await httpAudio.play();
+};
+
+const playAudioBase64 = async ({ audioBase64, mimeType }: WindowsTtsAudio, volume: number) => {
+  const bytes = Uint8Array.from(atob(audioBase64), char => char.charCodeAt(0));
+  await playAudioBlob(new Blob([bytes], { type: mimeType || "audio/wav" }), volume);
 };
 
 const speakWithWindowsSystem = async (item: LiveDanmakuSpeechQueueItem, settings: LiveDanmakuSpeechSettings) => {
@@ -208,8 +221,27 @@ const speakWithWindowsSystem = async (item: LiveDanmakuSpeechQueueItem, settings
       text: item.text,
       voiceId: settings.windowsTtsVoiceId,
       rate: settings.rate,
-      volume: settings.volume,
+      volume: Math.min(1, settings.volume),
       pitch: Math.min(2, Math.max(0.5, settings.pitch / 100)),
+    });
+    await playAudioBase64(audio, settings.volume);
+  } catch {
+    finishCurrent();
+  }
+};
+
+const speakWithLocalNaturalVoice = async (item: LiveDanmakuSpeechQueueItem, settings: LiveDanmakuSpeechSettings) => {
+  if (!settings.localVoiceSapiVoiceId) {
+    finishCurrent();
+    return;
+  }
+
+  try {
+    const audio = await window.electron.synthesizeSapiTts({
+      text: item.text,
+      voiceId: settings.localVoiceSapiVoiceId,
+      rate: settings.rate,
+      volume: Math.min(1, settings.volume),
     });
     await playAudioBase64(audio, settings.volume);
   } catch {
@@ -237,6 +269,10 @@ function speakNext() {
   }
   if (settings.provider === "windowsSystem") {
     void speakWithWindowsSystem(item, settings);
+    return;
+  }
+  if (settings.provider === "localNaturalVoice") {
+    void speakWithLocalNaturalVoice(item, settings);
     return;
   }
 
@@ -278,16 +314,20 @@ export const resetLiveDanmakuSpeechRuntime = () => {
   }
   httpAudio?.pause();
   httpAudio = null;
-  if (httpAudioUrl) {
-    URL.revokeObjectURL(httpAudioUrl);
-    httpAudioUrl = null;
-  }
+  cleanupHttpAudio();
   getSpeechSynthesis()?.cancel?.();
   resetLiveAudioDucking();
   updateQueueLength();
 };
 
 export const fetchWindowsTtsVoices = async () => window.electron.listWindowsTtsVoices();
+
+export const fetchSapiTtsVoices = async () => window.electron.listSapiTtsVoices();
+
+export const parseNaturalVoicePackage = async (dir: string) => window.electron.parseNaturalVoicePackage(dir);
+
+export const installNaturalVoiceAdapter = async (voicePackageDir: string) =>
+  window.electron.installNaturalVoiceAdapter(voicePackageDir);
 
 export const fetchTtsServerEngines = async (baseUrl: string) => {
   const response = await fetch(`${baseUrl.replace(/\/$/, "")}/api/engines`);
@@ -327,6 +367,11 @@ export const getTtsServerVoiceLabel = (voice: TtsServerVoice) => {
 export const getWindowsTtsVoiceLabel = (voice: WindowsTtsVoice) => {
   if (!voice.language) return voice.name;
   return `${voice.name} (${voice.language})`;
+};
+
+export const getLocalNaturalVoiceLabel = (voice: LocalNaturalVoice) => {
+  if (!voice.desc) return voice.name;
+  return `${voice.name} (${voice.desc})`;
 };
 
 export const useLiveDanmakuSpeech = create<LiveDanmakuSpeechState>(set => ({

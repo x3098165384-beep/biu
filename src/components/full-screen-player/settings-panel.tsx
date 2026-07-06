@@ -11,11 +11,14 @@ import {
   fetchWindowsTtsVoices,
   fetchTtsServerEngines,
   fetchTtsServerVoices,
+  getLocalNaturalVoiceLabel,
   getTtsServerEngineLabel,
   getTtsServerEngineValue,
   getTtsServerVoiceLabel,
   getTtsServerVoiceValue,
   getWindowsTtsVoiceLabel,
+  installNaturalVoiceAdapter,
+  parseNaturalVoicePackage,
   useLiveDanmakuSpeech,
 } from "@/store/live-danmaku-speech";
 import { usePlayList } from "@/store/play-list";
@@ -110,7 +113,10 @@ const FullScreenPlayerSettingsPanel = ({ isUiVisible = true }: { isUiVisible?: b
   const [ttsEngines, setTtsEngines] = useState<any[]>([]);
   const [ttsVoices, setTtsVoices] = useState<any[]>([]);
   const [windowsVoices, setWindowsVoices] = useState<WindowsTtsVoice[]>([]);
+  const [localNaturalVoices, setLocalNaturalVoices] = useState<LocalNaturalVoice[]>([]);
   const [ttsLoading, setTtsLoading] = useState(false);
+  const [localVoiceLoading, setLocalVoiceLoading] = useState(false);
+  const [showExternalTts, setShowExternalTts] = useState(speechSettings.provider === "ttsServer");
 
   useEffect(() => {
     if (!isUiVisible) {
@@ -205,6 +211,70 @@ const FullScreenPlayerSettingsPanel = ({ isUiVisible = true }: { isUiVisible?: b
     }
   };
 
+  const loadLocalNaturalVoices = async (dir = speechSettings.localVoicePackageDir) => {
+    if (!dir) {
+      addToast({ color: "warning", title: "请先选择语音包目录" });
+      return;
+    }
+    setLocalVoiceLoading(true);
+    try {
+      const voices = await parseNaturalVoicePackage(dir);
+      setLocalNaturalVoices(voices);
+      const voice =
+        voices.find(item => item.code === speechSettings.localVoiceCode) ||
+        voices.find(item => item.installed) ||
+        voices[0];
+      if (voice && !speechSettings.localVoiceCode) {
+        updateLiveDanmakuSpeech({
+          localVoiceCode: voice.code,
+          localVoiceName: voice.name,
+          localVoiceSapiVoiceId: voice.sapiVoiceId || "",
+        });
+      }
+      addToast({ color: "success", title: voices.length ? "本地语音包已识别" : "未找到可用语音" });
+    } catch {
+      addToast({ color: "danger", title: "本地语音包解析失败" });
+    } finally {
+      setLocalVoiceLoading(false);
+    }
+  };
+
+  const selectLocalNaturalVoiceDir = async () => {
+    const dir = await window.electron.selectDirectory("选择本地自然语音包目录");
+    if (!dir) return;
+    updateLiveDanmakuSpeech({ localVoicePackageDir: dir, localVoiceCode: "", localVoiceName: "", localVoiceSapiVoiceId: "" });
+    await loadLocalNaturalVoices(dir);
+  };
+
+  const setupLocalNaturalVoice = async () => {
+    if (!speechSettings.localVoicePackageDir) {
+      addToast({ color: "warning", title: "请先选择语音包目录" });
+      return;
+    }
+    setLocalVoiceLoading(true);
+    try {
+      await installNaturalVoiceAdapter(speechSettings.localVoicePackageDir);
+      const voices = await parseNaturalVoicePackage(speechSettings.localVoicePackageDir);
+      setLocalNaturalVoices(voices);
+      const voice =
+        voices.find(item => item.code === speechSettings.localVoiceCode && item.installed) ||
+        voices.find(item => item.installed);
+      if (voice) {
+        updateLiveDanmakuSpeech({
+          provider: "localNaturalVoice",
+          localVoiceCode: voice.code,
+          localVoiceName: voice.name,
+          localVoiceSapiVoiceId: voice.sapiVoiceId || "",
+        });
+      }
+      addToast({ color: voice ? "success" : "warning", title: voice ? "本地自然语音已安装" : "已安装，请刷新后选择语音" });
+    } catch {
+      addToast({ color: "danger", title: "本地自然语音安装失败" });
+    } finally {
+      setLocalVoiceLoading(false);
+    }
+  };
+
   useEffect(() => {
     if (isLive && speechSettings.provider === "windowsSystem" && !windowsVoices.length) {
       void loadWindowsTtsVoices();
@@ -212,7 +282,23 @@ const FullScreenPlayerSettingsPanel = ({ isUiVisible = true }: { isUiVisible?: b
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isLive, speechSettings.provider]);
 
+  useEffect(() => {
+    if (
+      isLive &&
+      speechSettings.provider === "localNaturalVoice" &&
+      speechSettings.localVoicePackageDir &&
+      !localNaturalVoices.length
+    ) {
+      void loadLocalNaturalVoices();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isLive, speechSettings.provider, speechSettings.localVoicePackageDir]);
+
   const testSpeech = () => {
+    if (speechSettings.provider === "localNaturalVoice" && !speechSettings.localVoiceSapiVoiceId) {
+      addToast({ color: "warning", title: "请先安装并选择本地自然语音" });
+      return;
+    }
     if (speechSettings.provider === "ttsServer" && !speechSettings.ttsServerEngine) {
       addToast({ color: "warning", title: "请先刷新并选择 TTS 引擎" });
       return;
@@ -344,11 +430,63 @@ const FullScreenPlayerSettingsPanel = ({ isUiVisible = true }: { isUiVisible?: b
               value={speechSettings.provider}
               onChange={event => updateLiveDanmakuSpeech({ provider: event.target.value as any })}
             >
+              <option value="localNaturalVoice">本地自然语音</option>
               <option value="windowsSystem">Windows 系统语音</option>
-              <option value="ttsServer">TTS Server</option>
               <option value="webSpeech">浏览器系统语音</option>
+              {speechSettings.provider === "ttsServer" && <option value="ttsServer">外部 HTTP TTS</option>}
             </select>
           </div>
+          {speechSettings.provider === "localNaturalVoice" && (
+            <div className="space-y-3">
+              <div className="flex items-center justify-between gap-4">
+                <div className="text-medium">语音包目录</div>
+                <div className="flex min-w-0 items-center gap-2">
+                  <div className="text-foreground-500 max-w-44 truncate text-small">
+                    {speechSettings.localVoicePackageDir || "未选择"}
+                  </div>
+                  <Button size="sm" variant="flat" onPress={selectLocalNaturalVoiceDir}>
+                    选择
+                  </Button>
+                </div>
+              </div>
+              <div className="flex items-center justify-between gap-4">
+                <div className="text-medium">语音</div>
+                <div className="flex items-center gap-2">
+                  <select
+                    className="border-default bg-content1 w-48 rounded border px-2 py-1 outline-none"
+                    value={speechSettings.localVoiceCode}
+                    onChange={event => {
+                      const voice = localNaturalVoices.find(item => item.code === event.target.value);
+                      updateLiveDanmakuSpeech({
+                        localVoiceCode: event.target.value,
+                        localVoiceName: voice?.name || "",
+                        localVoiceSapiVoiceId: voice?.sapiVoiceId || "",
+                      });
+                    }}
+                  >
+                    <option value="">选择语音</option>
+                    {localNaturalVoices.map(voice => (
+                      <option key={voice.code} value={voice.code}>
+                        {getLocalNaturalVoiceLabel(voice)}
+                        {voice.installed ? "" : "（未安装）"}
+                      </option>
+                    ))}
+                  </select>
+                  <Button size="sm" variant="flat" isLoading={localVoiceLoading} onPress={() => loadLocalNaturalVoices()}>
+                    刷新
+                  </Button>
+                </div>
+              </div>
+              <div className="flex justify-end">
+                <Button size="sm" color="primary" variant="flat" isLoading={localVoiceLoading} onPress={setupLocalNaturalVoice}>
+                  安装/配置
+                </Button>
+              </div>
+              <div className="text-foreground-500 text-small">
+                首次安装会下载 NaturalVoiceSAPIAdapter 并弹出 Windows 授权。
+              </div>
+            </div>
+          )}
           {speechSettings.provider === "windowsSystem" && (
             <div className="space-y-2">
               <div className="flex items-center justify-between gap-4">
@@ -378,12 +516,29 @@ const FullScreenPlayerSettingsPanel = ({ isUiVisible = true }: { isUiVisible?: b
                 </div>
               </div>
               {!windowsVoices.length && (
-                <div className="text-foreground-500 text-small">如果没有晓晓/云希，先把离线语音包装进 Windows 后再刷新。</div>
+                <div className="text-foreground-500 text-small">这里列出的是 Windows 已注册系统语音。</div>
               )}
             </div>
           )}
-          {speechSettings.provider === "ttsServer" && (
-            <>
+          <div className="space-y-3">
+            <div className="flex justify-end">
+              <Button size="sm" variant="light" onPress={() => setShowExternalTts(value => !value)}>
+                {showExternalTts ? "收起高级" : "高级"}
+              </Button>
+            </div>
+            {showExternalTts && (
+              <div className="border-default/60 space-y-3 border-t pt-3">
+                <div className="flex items-center justify-between gap-4">
+                  <div className="text-medium">外部 HTTP TTS</div>
+                  <Button
+                    size="sm"
+                    variant={speechSettings.provider === "ttsServer" ? "solid" : "flat"}
+                    color={speechSettings.provider === "ttsServer" ? "primary" : "default"}
+                    onPress={() => updateLiveDanmakuSpeech({ provider: "ttsServer" })}
+                  >
+                    使用
+                  </Button>
+                </div>
               <div className="flex items-center justify-between gap-4">
                 <div className="text-medium">服务地址</div>
                 <input
@@ -436,8 +591,24 @@ const FullScreenPlayerSettingsPanel = ({ isUiVisible = true }: { isUiVisible?: b
                   </Button>
                 </div>
               </div>
-            </>
-          )}
+              </div>
+            )}
+          </div>
+          <div className="space-y-1">
+            <div className="flex items-center justify-between gap-4">
+              <div className="text-medium">朗读音量</div>
+              <div className="text-foreground-500 w-14 text-right text-small">{Math.round(speechSettings.volume * 100)}%</div>
+            </div>
+            <input
+              className="w-full"
+              min={0}
+              max={3}
+              step={0.05}
+              type="range"
+              value={speechSettings.volume}
+              onChange={event => updateLiveDanmakuSpeech({ volume: Number(event.target.value) || 0 })}
+            />
+          </div>
           <div className="flex items-center justify-between gap-4">
             <div className="text-medium">语速</div>
             <input

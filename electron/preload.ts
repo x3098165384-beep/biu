@@ -36,6 +36,11 @@ const api: ElectronAPI = {
   },
   listWindowsTtsVoices: () => ipcRenderer.invoke(channel.tts.listWindowsVoices),
   synthesizeWindowsTts: request => ipcRenderer.invoke(channel.tts.synthesizeWindows, request),
+  listSapiTtsVoices: () => ipcRenderer.invoke(channel.tts.listSapiVoices),
+  synthesizeSapiTts: request => ipcRenderer.invoke(channel.tts.synthesizeSapi, request),
+  parseNaturalVoicePackage: dir => ipcRenderer.invoke(channel.tts.parseNaturalVoicePackage, dir),
+  installNaturalVoiceAdapter: voicePackageDir =>
+    ipcRenderer.invoke(channel.tts.installNaturalVoiceAdapter, voicePackageDir),
   setProxySettings: proxySettings => ipcRenderer.invoke(channel.app.setProxySettings, proxySettings),
   scanLocalMusic: dirs => ipcRenderer.invoke(channel.localMusic.scan, dirs),
   deleteLocalMusicFile: filePath => ipcRenderer.invoke(channel.localMusic.deleteFile, filePath),

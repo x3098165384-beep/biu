@@ -1,6 +1,7 @@
 import { describe, expect, test } from "vitest";
 
 import {
+  getLocalNaturalVoiceLabel,
   getTtsServerEngineLabel,
   getTtsServerEngineValue,
   getTtsServerVoiceLabel,
@@ -66,5 +67,19 @@ describe("live danmaku speech TTS Server helpers", () => {
         language: "zh-CN",
       }),
     ).toBe("Microsoft Xiaoxiao (zh-CN)");
+  });
+
+  test("labels local natural voices with description", () => {
+    expect(
+      getLocalNaturalVoiceLabel({
+        engine: "microsoft",
+        code: "zh-CN-XiaoxiaoNeural",
+        name: "晓晓",
+        desc: "zh-CN,Xiaoxiao",
+        folder: "E:/voices/microsoft/zh-CN-XiaoxiaoNeural",
+        manifestPath: "E:/voices/microsoft/zh-CN-XiaoxiaoNeural/AppxManifest.xml",
+        installed: false,
+      }),
+    ).toBe("晓晓 (zh-CN,Xiaoxiao)");
   });
 });

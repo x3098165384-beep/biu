@@ -47,6 +47,10 @@ export const channel = {
   tts: {
     listWindowsVoices: "tts:list-windows-voices",
     synthesizeWindows: "tts:synthesize-windows",
+    listSapiVoices: "tts:list-sapi-voices",
+    synthesizeSapi: "tts:synthesize-sapi",
+    parseNaturalVoicePackage: "tts:parse-natural-voice-package",
+    installNaturalVoiceAdapter: "tts:install-natural-voice-adapter",
   },
   router: {
     navigate: "router:navigate",

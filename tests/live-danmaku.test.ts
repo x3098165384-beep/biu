@@ -127,17 +127,21 @@ describe("live danmaku service", () => {
     ).toBe("SC，support");
   });
 
-  test("defaults live speech to Windows system voices", () => {
+  test("defaults live speech to local natural voices with boosted volume", () => {
     const settings = sanitizeLiveDanmakuSpeechSettings();
 
-    expect(settings.provider).toBe("windowsSystem");
+    expect(settings.provider).toBe("localNaturalVoice");
+    expect(settings.volume).toBe(1.5);
+    expect(settings.localVoicePackageDir).toBe("");
     expect(settings.windowsTtsVoiceId).toBe("");
-    expect(defaultLiveDanmakuSpeechSettings.provider).toBe("windowsSystem");
+    expect(defaultLiveDanmakuSpeechSettings.provider).toBe("localNaturalVoice");
   });
 
-  test("sanitizes legacy speech providers without dropping Windows voice selection", () => {
+  test("sanitizes speech providers without dropping voice selection", () => {
     expect(sanitizeLiveDanmakuSpeechSettings({ provider: "webSpeech" }).provider).toBe("webSpeech");
     expect(sanitizeLiveDanmakuSpeechSettings({ provider: "ttsServer" }).provider).toBe("ttsServer");
+    expect(sanitizeLiveDanmakuSpeechSettings({ provider: "localNaturalVoice" }).provider).toBe("localNaturalVoice");
+    expect(sanitizeLiveDanmakuSpeechSettings({ volume: 5 }).volume).toBe(3);
     expect(
       sanitizeLiveDanmakuSpeechSettings({
         provider: "windowsSystem",
