@@ -153,7 +153,10 @@ declare global {
     /** 解析本地自然语音包目录 */
     parseNaturalVoicePackage: (dir: string) => Promise<LocalNaturalVoice[]>;
     /** 安装/配置 NaturalVoiceSAPIAdapter */
-    installNaturalVoiceAdapter: (voicePackageDir: string) => Promise<NaturalVoiceAdapterInstallResult>;
+    installNaturalVoiceAdapter: (
+      voicePackageDir: string,
+      voiceCodes?: string[],
+    ) => Promise<NaturalVoiceAdapterInstallResult>;
     /** 获取当前应用平台：macos | windows | linux */
     getPlatform: () => AppPlatForm;
     /** 更新网络代理设置 */

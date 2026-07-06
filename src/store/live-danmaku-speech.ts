@@ -326,8 +326,8 @@ export const fetchSapiTtsVoices = async () => window.electron.listSapiTtsVoices(
 
 export const parseNaturalVoicePackage = async (dir: string) => window.electron.parseNaturalVoicePackage(dir);
 
-export const installNaturalVoiceAdapter = async (voicePackageDir: string) =>
-  window.electron.installNaturalVoiceAdapter(voicePackageDir);
+export const installNaturalVoiceAdapter = async (voicePackageDir: string, voiceCodes?: string[]) =>
+  window.electron.installNaturalVoiceAdapter(voicePackageDir, voiceCodes);
 
 export const fetchTtsServerEngines = async (baseUrl: string) => {
   const response = await fetch(`${baseUrl.replace(/\/$/, "")}/api/engines`);

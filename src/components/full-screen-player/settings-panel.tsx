@@ -253,7 +253,10 @@ const FullScreenPlayerSettingsPanel = ({ isUiVisible = true }: { isUiVisible?: b
     }
     setLocalVoiceLoading(true);
     try {
-      await installNaturalVoiceAdapter(speechSettings.localVoicePackageDir);
+      await installNaturalVoiceAdapter(
+        speechSettings.localVoicePackageDir,
+        speechSettings.localVoiceCode ? [speechSettings.localVoiceCode] : undefined,
+      );
       const voices = await parseNaturalVoicePackage(speechSettings.localVoicePackageDir);
       setLocalNaturalVoices(voices);
       const voice =

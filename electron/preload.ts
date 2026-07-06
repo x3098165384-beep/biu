@@ -39,8 +39,8 @@ const api: ElectronAPI = {
   listSapiTtsVoices: () => ipcRenderer.invoke(channel.tts.listSapiVoices),
   synthesizeSapiTts: request => ipcRenderer.invoke(channel.tts.synthesizeSapi, request),
   parseNaturalVoicePackage: dir => ipcRenderer.invoke(channel.tts.parseNaturalVoicePackage, dir),
-  installNaturalVoiceAdapter: voicePackageDir =>
-    ipcRenderer.invoke(channel.tts.installNaturalVoiceAdapter, voicePackageDir),
+  installNaturalVoiceAdapter: (voicePackageDir, voiceCodes) =>
+    ipcRenderer.invoke(channel.tts.installNaturalVoiceAdapter, voicePackageDir, voiceCodes),
   setProxySettings: proxySettings => ipcRenderer.invoke(channel.app.setProxySettings, proxySettings),
   scanLocalMusic: dirs => ipcRenderer.invoke(channel.localMusic.scan, dirs),
   deleteLocalMusicFile: filePath => ipcRenderer.invoke(channel.localMusic.deleteFile, filePath),

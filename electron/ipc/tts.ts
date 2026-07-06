@@ -309,6 +309,25 @@ export const parseNaturalVoiceConfig = async (dir: string): Promise<LocalNatural
 
 const getAdapterDir = () => path.join(os.homedir(), "AppData", "Local", "Biu", "NaturalVoiceSAPIAdapter", ADAPTER_VERSION);
 
+const getLocalVoiceInstallRoot = () =>
+  path.join(process.env.LOCALAPPDATA || path.join(os.homedir(), "AppData", "Local"), "Biu", "tts-voices");
+
+const copyNaturalVoicesToLocalRoot = async (voicePackageDir: string, voiceCodes?: string[]) => {
+  const voices = await parseNaturalVoiceConfig(voicePackageDir);
+  const selected = voiceCodes?.length ? voices.filter(voice => voiceCodes.includes(voice.code)) : voices;
+  if (!selected.length) throw new Error("No local natural voices found");
+
+  const root = getLocalVoiceInstallRoot();
+  await fs.mkdir(root, { recursive: true });
+  for (const voice of selected) {
+    const target = path.join(root, voice.engine, voice.code);
+    await fs.rm(target, { force: true, recursive: true });
+    await fs.mkdir(path.dirname(target), { recursive: true });
+    await fs.cp(voice.folder, target, { recursive: true });
+  }
+  return root;
+};
+
 const matchLocalVoicesToSapi = (localVoices: LocalNaturalVoice[], sapiVoices: SapiTtsVoice[]) =>
   localVoices.map(voice => {
     const codeTail = voice.code.split("-").at(-1)?.replace(/Neural$/i, "").toLowerCase() || "";
@@ -352,12 +371,13 @@ export function registerTtsHandlers() {
     return matchLocalVoicesToSapi(localVoices, sapiVoices);
   });
 
-  ipcMain.handle(channel.tts.installNaturalVoiceAdapter, async (_, voicePackageDir: string) => {
+  ipcMain.handle(channel.tts.installNaturalVoiceAdapter, async (_, voicePackageDir: string, voiceCodes?: string[]) => {
+    const localVoiceRoot = await copyNaturalVoicesToLocalRoot(voicePackageDir, voiceCodes);
     const payload = Buffer.from(
       JSON.stringify({
         adapterDir: getAdapterDir(),
         url: ADAPTER_URL,
-        voicePackageDir,
+        voicePackageDir: localVoiceRoot,
       }),
       "utf8",
     ).toString("base64");
