@@ -44,7 +44,6 @@ interface LiveDanmakuSpeechState {
 }
 
 let highPriorityQueue: LiveDanmakuSpeechQueueItem[] = [];
-let normalQueue: LiveDanmakuSpeechQueueItem[] = [];
 let pendingNormal: LiveDanmakuSpeechQueueItem | null = null;
 let cooldownTimer: number | null = null;
 let speaking = false;
@@ -73,11 +72,11 @@ const isProviderSupported = (settings = getSettings()) =>
       ? isTtsServerSupported()
       : isWindowsSystemSupported();
 
-const queueItems = () => [...highPriorityQueue, ...normalQueue];
+const queueItems = () => [...highPriorityQueue, ...(pendingNormal ? [pendingNormal] : [])];
 
 const updateQueueLength = () => {
   useLiveDanmakuSpeech.setState({
-    queueLength: highPriorityQueue.length + normalQueue.length + (pendingNormal ? 1 : 0),
+    queueLength: highPriorityQueue.length + (pendingNormal ? 1 : 0),
   });
 };
 
@@ -119,6 +118,9 @@ const finishCurrent = () => {
   speakNext();
   maybeResetDucking();
 };
+
+const canSpeakNormal = (settings = getSettings()) =>
+  Date.now() - lastNormalSpokenAt >= settings.minIntervalSeconds * 1000;
 
 const speakWithWebSpeech = (item: LiveDanmakuSpeechQueueItem, settings: LiveDanmakuSpeechSettings) => {
   const synth = getSpeechSynthesis();
@@ -253,8 +255,14 @@ function speakNext() {
   const settings = getSettings();
   if (!settings.enabled || speaking || !isProviderSupported(settings)) return;
 
-  const item = highPriorityQueue.shift() || normalQueue.shift();
+  const item = highPriorityQueue.shift() || (pendingNormal && canSpeakNormal(settings) ? pendingNormal : null);
+  if (item === pendingNormal) {
+    pendingNormal = null;
+  }
   updateQueueLength();
+  if (pendingNormal && !item) {
+    schedulePendingNormal();
+  }
   if (!item) return;
 
   speaking = true;
@@ -280,31 +288,24 @@ function speakNext() {
 }
 
 const schedulePendingNormal = () => {
-  if (cooldownTimer !== null) return;
+  if (cooldownTimer !== null || !pendingNormal) return;
 
   const settings = getSettings();
   const delay = Math.max(0, settings.minIntervalSeconds * 1000 - (Date.now() - lastNormalSpokenAt));
   cooldownTimer = window.setTimeout(() => {
     cooldownTimer = null;
-    if (pendingNormal) {
-      normalQueue.push(pendingNormal);
-      pendingNormal = null;
-      trimQueues();
-      updateQueueLength();
-      speakNext();
-    }
+    speakNext();
   }, delay);
 };
 
 const trimQueues = () => {
   const trimmed = trimLiveDanmakuSpeechQueue(queueItems(), getSettings().maxQueue);
   highPriorityQueue = trimmed.filter(item => item.type === "super_chat");
-  normalQueue = trimmed.filter(item => item.type === "danmaku");
+  pendingNormal = trimmed.findLast(item => item.type === "danmaku") ?? null;
 };
 
 export const resetLiveDanmakuSpeechRuntime = () => {
   highPriorityQueue = [];
-  normalQueue = [];
   pendingNormal = null;
   speaking = false;
   lastNormalSpokenAt = 0;
@@ -415,16 +416,15 @@ export const useLiveDanmakuSpeech = create<LiveDanmakuSpeechState>(set => ({
       return;
     }
 
-    if (Date.now() - lastNormalSpokenAt >= settings.minIntervalSeconds * 1000) {
-      normalQueue.push(item);
-      trimQueues();
-      updateQueueLength();
+    pendingNormal = item;
+    trimQueues();
+    updateQueueLength();
+
+    if (canSpeakNormal(settings)) {
       speakNext();
       return;
     }
 
-    pendingNormal = item;
-    updateQueueLength();
     schedulePendingNormal();
   },
 }));
