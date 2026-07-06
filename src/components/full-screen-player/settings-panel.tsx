@@ -25,6 +25,8 @@ import { usePlayList } from "@/store/play-list";
 import {
   defaultLiveAudioLimitSettings,
   defaultLiveDanmakuSpeechSettings,
+  liveAudioLimitThresholdDbToVolume,
+  liveAudioLimitVolumeToThresholdDb,
   sanitizeLiveAudioLimitSettings,
   sanitizeLiveDanmakuSpeechSettings,
 } from "@shared/live";
@@ -68,6 +70,7 @@ const FullScreenPlayerSettingsPanel = ({ isUiVisible = true }: { isUiVisible?: b
   const isLive = playItem?.type === "live";
   const speechSettings = sanitizeLiveDanmakuSpeechSettings(liveDanmakuSpeech || defaultLiveDanmakuSpeechSettings);
   const audioLimitSettings = sanitizeLiveAudioLimitSettings(liveAudioLimit || defaultLiveAudioLimitSettings);
+  const audioLimitVolume = Math.round(liveAudioLimitThresholdDbToVolume(audioLimitSettings.thresholdDb) * 100);
   const enqueueSpeech = useLiveDanmakuSpeech(s => s.enqueue);
   const updateLiveDanmaku = (patch: Partial<typeof liveDanmaku>) => {
     update({
@@ -675,15 +678,23 @@ const FullScreenPlayerSettingsPanel = ({ isUiVisible = true }: { isUiVisible?: b
           </div>
           {audioLimitSettings.enabled && (
             <>
-              <div className="flex items-center justify-between gap-4">
-                <div className="text-medium">阈值 dB</div>
+              <div className="space-y-2">
+                <div className="flex items-center justify-between gap-4">
+                  <div className="text-medium">最高音量</div>
+                  <div className="text-small text-default-500 tabular-nums">{audioLimitVolume}%</div>
+                </div>
                 <input
-                  className="border-default bg-content1 w-20 rounded border px-2 py-1 text-right outline-none"
-                  min={-60}
-                  max={0}
-                  type="number"
-                  value={audioLimitSettings.thresholdDb}
-                  onChange={event => updateLiveAudioLimit({ thresholdDb: Number(event.target.value) || -12 })}
+                  className="w-full accent-current"
+                  min={5}
+                  max={100}
+                  step={1}
+                  type="range"
+                  value={audioLimitVolume}
+                  onChange={event =>
+                    updateLiveAudioLimit({
+                      thresholdDb: liveAudioLimitVolumeToThresholdDb(Number(event.target.value) / 100),
+                    })
+                  }
                 />
               </div>
               <div className="flex items-center justify-between gap-4">

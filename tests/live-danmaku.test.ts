@@ -7,6 +7,8 @@ import {
   defaultLiveDanmakuSpeechSettings,
   getLiveDanmakuSpeechText,
   isLiveDanmakuLineBlocked,
+  liveAudioLimitThresholdDbToVolume,
+  liveAudioLimitVolumeToThresholdDb,
   mapSpeechRateToTtsServerSpeed,
   mergeLiveDanmakuLine,
   sanitizeLiveDanmakuSpeechSettings,
@@ -31,6 +33,13 @@ describe("live danmaku service", () => {
       text: "hello",
       time: 123000,
     });
+  });
+
+  test("maps live audio limiter threshold to volume-like values", () => {
+    expect(liveAudioLimitVolumeToThresholdDb(1)).toBe(0);
+    expect(liveAudioLimitVolumeToThresholdDb(0.5)).toBe(-6);
+    expect(Math.round(liveAudioLimitThresholdDbToVolume(-6) * 100)).toBe(50);
+    expect(Math.round(liveAudioLimitThresholdDbToVolume(-12) * 100)).toBe(25);
   });
 
   test("normalizes SUPER_CHAT_MESSAGE", () => {

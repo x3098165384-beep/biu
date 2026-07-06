@@ -306,6 +306,16 @@ export const sanitizeLiveAudioLimitSettings = (settings?: Partial<LiveAudioLimit
   release: Math.min(1, Math.max(0.01, numberOrDefault(settings?.release, defaultLiveAudioLimitSettings.release))),
 });
 
+export const liveAudioLimitVolumeToThresholdDb = (volume: number) => {
+  const normalized = Math.min(1, Math.max(0.001, numberOrDefault(volume, 0.25)));
+  return Math.round(20 * Math.log10(normalized));
+};
+
+export const liveAudioLimitThresholdDbToVolume = (thresholdDb: number) => {
+  const db = Math.min(0, Math.max(-60, numberOrDefault(thresholdDb, defaultLiveAudioLimitSettings.thresholdDb)));
+  return Math.min(1, Math.max(0.001, 10 ** (db / 20)));
+};
+
 export const isLiveDanmakuLineBlocked = (line: LiveDanmakuLine, blockedKeywords?: string) => {
   const keywords = splitBlockedKeywords(blockedKeywords);
   return keywords.some(keyword => line.text.includes(keyword) || line.username.includes(keyword));
