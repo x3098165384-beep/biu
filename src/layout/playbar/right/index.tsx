@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef } from "react";
 
 import { RiSpeakFill, RiSpeakLine } from "@remixicon/react";
 import clsx from "classnames";
+import { useShallow } from "zustand/shallow";
 
 import IconButton from "@/components/icon-button";
 import MusicDownloadButton from "@/components/music-download-button";
@@ -26,11 +27,13 @@ import {
 
 const LiveDanmakuSpeechButton = () => {
   const playItem = usePlayList(s => s.getPlayItem());
-  const { liveDanmaku, liveDanmakuSpeech, videoDanmaku } = useFullScreenPlayerSettings(s => ({
-    liveDanmaku: s.liveDanmaku || defaultLiveDanmakuSettings,
-    liveDanmakuSpeech: s.liveDanmakuSpeech || defaultLiveDanmakuSpeechSettings,
-    videoDanmaku: sanitizeVideoDanmakuSettings(s.videoDanmaku || defaultVideoDanmakuSettings),
-  }));
+  const { rawLiveDanmaku, rawLiveDanmakuSpeech, rawVideoDanmaku } = useFullScreenPlayerSettings(
+    useShallow(s => ({
+      rawLiveDanmaku: s.liveDanmaku,
+      rawLiveDanmakuSpeech: s.liveDanmakuSpeech,
+      rawVideoDanmaku: s.videoDanmaku,
+    })),
+  );
   const currentTime = usePlayProgress(s => s.currentTime);
   const videoDanmakuLines = useVideoDanmaku(s => s.lines);
   const loadVideoDanmaku = useVideoDanmaku(s => s.load);
@@ -47,6 +50,12 @@ const LiveDanmakuSpeechButton = () => {
   const isSpeechTarget = isLive || isVideo;
   const roomId = isLive ? playItem.roomId : undefined;
   const videoKey = isVideo ? `${playItem.bvid}-${playItem.cid}` : undefined;
+  const liveDanmaku = rawLiveDanmaku || defaultLiveDanmakuSettings;
+  const liveDanmakuSpeech = rawLiveDanmakuSpeech || defaultLiveDanmakuSpeechSettings;
+  const videoDanmaku = useMemo(
+    () => sanitizeVideoDanmakuSettings(rawVideoDanmaku || defaultVideoDanmakuSettings),
+    [rawVideoDanmaku],
+  );
   const enabled = Boolean(liveDanmakuSpeech.enabled);
   const videoCues = useMemo(
     () =>

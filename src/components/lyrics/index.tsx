@@ -50,8 +50,10 @@ const Lyrics = ({ color, centered, showControls }: { color?: string; centered?: 
   const playId = usePlayList(s => s.playId);
   const playItem = usePlayList(s => s.list.find(item => item.id === s.playId));
   const liveDanmakuSettings = useFullScreenPlayerSettings(s => s.liveDanmaku || defaultLiveDanmakuSettings);
-  const videoDanmakuSettings = useFullScreenPlayerSettings(s =>
-    sanitizeVideoDanmakuSettings(s.videoDanmaku || defaultVideoDanmakuSettings),
+  const rawVideoDanmakuSettings = useFullScreenPlayerSettings(s => s.videoDanmaku);
+  const videoDanmakuSettings = useMemo(
+    () => sanitizeVideoDanmakuSettings(rawVideoDanmakuSettings || defaultVideoDanmakuSettings),
+    [rawVideoDanmakuSettings],
   );
   const sharedLiveLines = useLiveDanmaku(s => s.lines);
   const sharedLiveStatus = useLiveDanmaku(s => s.status);
