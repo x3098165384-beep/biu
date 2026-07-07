@@ -2,6 +2,7 @@ import { describe, expect, test } from "vitest";
 
 import { normalizeDanmakuMessage, normalizeSuperChatMessage } from "@/service/live-danmaku";
 import {
+  buildVideoDanmakuCues,
   buildLiveDanmakuCandidates,
   buildTtsServerUrl,
   defaultLiveDanmakuSpeechSettings,
@@ -11,6 +12,7 @@ import {
   liveAudioLimitVolumeToThresholdDb,
   mapSpeechRateToTtsServerSpeed,
   mergeLiveDanmakuLine,
+  parseBiliVideoDanmakuXml,
   sanitizeLiveDanmakuSpeechSettings,
   shouldSpeakLiveDanmakuLine,
   trimLiveDanmakuSpeechQueue,
@@ -110,6 +112,40 @@ describe("live danmaku service", () => {
         port: 2245,
         address: "wss://b.chat.bilibili.com:2245/sub",
       },
+    ]);
+  });
+
+  test("parses readable video danmaku xml lines", () => {
+    const lines = parseBiliVideoDanmakuXml(`
+      <i>
+        <d p="12.34,1,25,16777215,1,0,0,hash-a">hello</d>
+        <d p="10,7,25,16777215,1,0,0,skip">advanced</d>
+        <d p="8,5,25,16777215,1,0,0,top-id">top</d>
+      </i>
+    `);
+
+    expect(lines).toEqual([
+      { id: "top-id", mode: 5, text: "top", time: 8000 },
+      { id: "hash-a", mode: 1, text: "hello", time: 12340 },
+    ]);
+  });
+
+  test("builds sparse video danmaku cues from dense timeline", () => {
+    const cues = buildVideoDanmakuCues({
+      blockedKeywords: "blocked",
+      windowSeconds: 4,
+      lines: [
+        { id: "1", mode: 1, text: "first", time: 1000 },
+        { id: "2", mode: 1, text: "same", time: 2000 },
+        { id: "3", mode: 1, text: "same", time: 3500 },
+        { id: "4", mode: 1, text: "blocked text", time: 5000 },
+        { id: "5", mode: 1, text: "next", time: 6100 },
+      ],
+    });
+
+    expect(cues).toEqual([
+      { id: "video-danmaku-0-2", text: "same", time: 2000, count: 2 },
+      { id: "video-danmaku-1-5", text: "next", time: 6100, count: 1 },
     ]);
   });
 

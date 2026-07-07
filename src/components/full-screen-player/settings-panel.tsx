@@ -25,10 +25,12 @@ import { usePlayList } from "@/store/play-list";
 import {
   defaultLiveAudioLimitSettings,
   defaultLiveDanmakuSpeechSettings,
+  defaultVideoDanmakuSettings,
   liveAudioLimitThresholdDbToVolume,
   liveAudioLimitVolumeToThresholdDb,
   sanitizeLiveAudioLimitSettings,
   sanitizeLiveDanmakuSpeechSettings,
+  sanitizeVideoDanmakuSettings,
 } from "@shared/live";
 
 const FullScreenPlayerSettingsPanel = ({ isUiVisible = true }: { isUiVisible?: boolean }) => {
@@ -49,6 +51,7 @@ const FullScreenPlayerSettingsPanel = ({ isUiVisible = true }: { isUiVisible?: b
     spectrumColor,
     lyricsColor,
     liveDanmaku,
+    videoDanmaku,
     liveDanmakuSpeech,
     liveAudioLimit,
     update,
@@ -62,13 +65,17 @@ const FullScreenPlayerSettingsPanel = ({ isUiVisible = true }: { isUiVisible?: b
       spectrumColor: s.spectrumColor,
       lyricsColor: s.lyricsColor,
       liveDanmaku: s.liveDanmaku,
+      videoDanmaku: s.videoDanmaku,
       liveDanmakuSpeech: s.liveDanmakuSpeech,
       liveAudioLimit: s.liveAudioLimit,
       update: s.update,
     })),
   );
   const isLive = playItem?.type === "live";
+  const isVideo = playItem?.type === "mv" && Boolean(playItem.bvid && playItem.cid);
+  const canUseDanmakuSpeech = isLive || isVideo;
   const speechSettings = sanitizeLiveDanmakuSpeechSettings(liveDanmakuSpeech || defaultLiveDanmakuSpeechSettings);
+  const videoDanmakuSettings = sanitizeVideoDanmakuSettings(videoDanmaku || defaultVideoDanmakuSettings);
   const audioLimitSettings = sanitizeLiveAudioLimitSettings(liveAudioLimit || defaultLiveAudioLimitSettings);
   const audioLimitVolume = Math.round(liveAudioLimitThresholdDbToVolume(audioLimitSettings.thresholdDb) * 100);
   const enqueueSpeech = useLiveDanmakuSpeech(s => s.enqueue);
@@ -84,6 +91,14 @@ const FullScreenPlayerSettingsPanel = ({ isUiVisible = true }: { isUiVisible?: b
     update({
       liveDanmakuSpeech: {
         ...speechSettings,
+        ...patch,
+      },
+    });
+  };
+  const updateVideoDanmaku = (patch: Partial<typeof videoDanmakuSettings>) => {
+    update({
+      videoDanmaku: {
+        ...videoDanmakuSettings,
         ...patch,
       },
     });
@@ -420,7 +435,19 @@ const FullScreenPlayerSettingsPanel = ({ isUiVisible = true }: { isUiVisible?: b
         </div>
       )}
 
-      {isLive && (
+      {values?.showLyrics && isVideo && (
+        <div className="border-default/60 space-y-3 border-t pt-4">
+          <div className="flex items-center justify-between">
+            <div className="text-medium mr-6">弹幕替代字幕</div>
+            <Switch
+              isSelected={videoDanmakuSettings.enabled}
+              onValueChange={enabled => updateVideoDanmaku({ enabled })}
+            />
+          </div>
+        </div>
+      )}
+
+      {canUseDanmakuSpeech && (
         <div className="border-default/60 space-y-3 border-t pt-4">
           <div className="flex items-center justify-between">
             <div className="text-medium mr-6">弹幕朗读</div>

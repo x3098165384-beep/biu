@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef } from "react";
 
 import { RiSpeakFill, RiSpeakLine } from "@remixicon/react";
 import clsx from "classnames";
@@ -13,23 +13,49 @@ import { useFullScreenPlayerSettings } from "@/store/full-screen-player-settings
 import { useLiveDanmakuConsumer } from "@/store/live-danmaku";
 import { resetLiveDanmakuSpeechRuntime, useLiveDanmakuSpeech } from "@/store/live-danmaku-speech";
 import { usePlayList } from "@/store/play-list";
-import { defaultLiveDanmakuSpeechSettings, type LiveDanmakuLine } from "@shared/live";
+import { usePlayProgress } from "@/store/play-progress";
+import { useVideoDanmaku } from "@/store/video-danmaku";
+import {
+  buildVideoDanmakuCues,
+  defaultLiveDanmakuSettings,
+  defaultLiveDanmakuSpeechSettings,
+  defaultVideoDanmakuSettings,
+  sanitizeVideoDanmakuSettings,
+  type LiveDanmakuLine,
+} from "@shared/live";
 
 const LiveDanmakuSpeechButton = () => {
   const playItem = usePlayList(s => s.getPlayItem());
-  const liveDanmakuSpeech = useFullScreenPlayerSettings(
-    s => s.liveDanmakuSpeech || defaultLiveDanmakuSpeechSettings,
-  );
+  const { liveDanmaku, liveDanmakuSpeech, videoDanmaku } = useFullScreenPlayerSettings(s => ({
+    liveDanmaku: s.liveDanmaku || defaultLiveDanmakuSettings,
+    liveDanmakuSpeech: s.liveDanmakuSpeech || defaultLiveDanmakuSpeechSettings,
+    videoDanmaku: sanitizeVideoDanmakuSettings(s.videoDanmaku || defaultVideoDanmakuSettings),
+  }));
+  const currentTime = usePlayProgress(s => s.currentTime);
+  const videoDanmakuLines = useVideoDanmaku(s => s.lines);
+  const loadVideoDanmaku = useVideoDanmaku(s => s.load);
   const isSupported = useLiveDanmakuSpeech(s => s.isSupported);
   const refreshSupport = useLiveDanmakuSpeech(s => s.refreshSupport);
   const toggle = useLiveDanmakuSpeech(s => s.toggle);
   const stop = useLiveDanmakuSpeech(s => s.stop);
   const enqueue = useLiveDanmakuSpeech(s => s.enqueue);
-  const prevRoomIdRef = useRef<number | undefined>(undefined);
+  const prevTargetKeyRef = useRef<string | undefined>(undefined);
+  const prevVideoTimeMsRef = useRef<number | undefined>(undefined);
 
   const isLive = playItem?.type === "live" && Boolean(playItem.roomId);
+  const isVideo = playItem?.type === "mv" && Boolean(playItem.bvid && playItem.cid);
+  const isSpeechTarget = isLive || isVideo;
   const roomId = isLive ? playItem.roomId : undefined;
+  const videoKey = isVideo ? `${playItem.bvid}-${playItem.cid}` : undefined;
   const enabled = Boolean(liveDanmakuSpeech.enabled);
+  const videoCues = useMemo(
+    () =>
+      buildVideoDanmakuCues({
+        lines: videoDanmakuLines,
+        blockedKeywords: liveDanmaku.blockedKeywords,
+      }),
+    [liveDanmaku.blockedKeywords, videoDanmakuLines],
+  );
 
   const handleLine = useCallback(
     (line: LiveDanmakuLine, meta: { isNew: boolean; folded: boolean }) => {
@@ -51,19 +77,51 @@ const LiveDanmakuSpeechButton = () => {
   }, [liveDanmakuSpeech.provider, refreshSupport]);
 
   useEffect(() => {
-    if (!isLive) {
-      prevRoomIdRef.current = undefined;
+    if (!isSpeechTarget) {
+      prevTargetKeyRef.current = undefined;
+      prevVideoTimeMsRef.current = undefined;
       if (enabled) stop();
       return;
     }
 
-    if (prevRoomIdRef.current !== undefined && prevRoomIdRef.current !== roomId) {
+    const targetKey = isLive ? `live:${roomId}` : `video:${videoKey}`;
+    if (prevTargetKeyRef.current !== undefined && prevTargetKeyRef.current !== targetKey) {
       resetLiveDanmakuSpeechRuntime();
+      prevVideoTimeMsRef.current = undefined;
     }
-    prevRoomIdRef.current = roomId;
-  }, [enabled, isLive, roomId, stop]);
+    prevTargetKeyRef.current = targetKey;
+  }, [enabled, isLive, isSpeechTarget, roomId, stop, videoKey]);
 
-  if (!isLive) return null;
+  useEffect(() => {
+    if (!isVideo || !enabled || !videoDanmaku.enabled || !playItem?.bvid || !playItem.cid) return;
+    void loadVideoDanmaku({ bvid: playItem.bvid, cid: playItem.cid });
+  }, [enabled, isVideo, loadVideoDanmaku, playItem?.bvid, playItem?.cid, videoDanmaku.enabled]);
+
+  useEffect(() => {
+    if (!isVideo || !enabled || !videoDanmaku.enabled || !videoCues.length) {
+      prevVideoTimeMsRef.current = undefined;
+      return;
+    }
+
+    const currentMs = currentTime * 1000;
+    const previousMs = prevVideoTimeMsRef.current;
+    prevVideoTimeMsRef.current = currentMs;
+
+    if (previousMs === undefined || currentMs <= previousMs || currentMs - previousMs > 10000) return;
+
+    const cue = videoCues.findLast(item => item.time > previousMs && item.time <= currentMs);
+    if (!cue) return;
+
+    enqueue({
+      id: cue.id,
+      type: "danmaku",
+      username: "",
+      text: cue.text,
+      time: cue.time,
+    });
+  }, [currentTime, enabled, enqueue, isVideo, videoCues, videoDanmaku.enabled]);
+
+  if (!isSpeechTarget) return null;
 
   const tooltip = !isSupported ? "当前环境不支持语音朗读" : enabled ? "关闭弹幕朗读" : "朗读弹幕";
   const Icon = enabled ? RiSpeakFill : RiSpeakLine;

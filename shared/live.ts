@@ -77,6 +77,24 @@ export interface LiveDanmakuSettings {
   blockedKeywords: string;
 }
 
+export interface VideoDanmakuSettings {
+  enabled: boolean;
+}
+
+export interface VideoDanmakuLine {
+  id: string;
+  mode: number;
+  text: string;
+  time: number;
+}
+
+export interface VideoDanmakuCue {
+  id: string;
+  text: string;
+  time: number;
+  count: number;
+}
+
 export interface LiveDanmakuSpeechSettings {
   enabled: boolean;
   provider: "localNaturalVoice" | "windowsSystem" | "webSpeech" | "ttsServer";
@@ -116,6 +134,10 @@ export const defaultLiveDanmakuSettings: LiveDanmakuSettings = {
   maxPerSecond: 8,
   duplicateWindowSeconds: 12,
   blockedKeywords: "",
+};
+
+export const defaultVideoDanmakuSettings: VideoDanmakuSettings = {
+  enabled: true,
 };
 
 export const defaultLiveDanmakuSpeechSettings: LiveDanmakuSpeechSettings = {
@@ -237,6 +259,76 @@ export const splitBlockedKeywords = (value?: string) =>
     .map(item => item.trim())
     .filter(Boolean);
 
+const readableVideoDanmakuModes = new Set([1, 2, 3, 4, 5, 6]);
+
+export const parseBiliVideoDanmakuXml = (raw?: string | null): VideoDanmakuLine[] => {
+  if (!raw || typeof DOMParser === "undefined") return [];
+
+  const doc = new DOMParser().parseFromString(raw, "text/xml");
+  const nodes = Array.from(doc.querySelectorAll("d"));
+
+  return nodes
+    .map((node, index) => {
+      const parts = (node.getAttribute("p") || "").split(",");
+      const seconds = Number(parts[0]);
+      const mode = Number(parts[1]);
+      const text = node.textContent?.trim() || "";
+
+      if (!text || !Number.isFinite(seconds) || !Number.isFinite(mode) || !readableVideoDanmakuModes.has(mode)) {
+        return null;
+      }
+
+      return {
+        id: parts[7] || `${Math.round(seconds * 1000)}-${index}`,
+        mode,
+        text,
+        time: Math.max(0, Math.round(seconds * 1000)),
+      };
+    })
+    .filter((line): line is VideoDanmakuLine => Boolean(line))
+    .toSorted((a, b) => a.time - b.time);
+};
+
+export const buildVideoDanmakuCues = ({
+  lines,
+  blockedKeywords,
+  windowSeconds = 4,
+}: {
+  lines: VideoDanmakuLine[];
+  blockedKeywords?: string;
+  windowSeconds?: number;
+}): VideoDanmakuCue[] => {
+  const windowMs = Math.max(500, windowSeconds * 1000);
+  const keywords = splitBlockedKeywords(blockedKeywords);
+  const buckets = new Map<number, Map<string, { count: number; firstLine: VideoDanmakuLine }>>();
+
+  lines.forEach(line => {
+    if (keywords.some(keyword => line.text.includes(keyword))) return;
+
+    const bucket = Math.floor(line.time / windowMs);
+    const texts = buckets.get(bucket) || new Map<string, { count: number; firstLine: VideoDanmakuLine }>();
+    const item = texts.get(line.text);
+    if (item) {
+      item.count += 1;
+    } else {
+      texts.set(line.text, { count: 1, firstLine: line });
+    }
+    buckets.set(bucket, texts);
+  });
+
+  return [...buckets.entries()]
+    .map(([bucket, texts]) => {
+      const best = [...texts.values()].sort((a, b) => b.count - a.count || a.firstLine.time - b.firstLine.time)[0];
+      return {
+        id: `video-danmaku-${bucket}-${best.firstLine.id}`,
+        text: best.firstLine.text,
+        time: best.firstLine.time,
+        count: best.count,
+      };
+    })
+    .toSorted((a, b) => a.time - b.time);
+};
+
 const numberOrDefault = (value: unknown, fallback: number) => {
   const number = Number(value);
   return Number.isFinite(number) ? number : fallback;
@@ -257,6 +349,12 @@ export const sanitizeLiveDanmakuSettings = (settings?: Partial<LiveDanmakuSettin
       numberOrDefault(settings?.duplicateWindowSeconds, defaultLiveDanmakuSettings.duplicateWindowSeconds),
     ),
   ),
+});
+
+export const sanitizeVideoDanmakuSettings = (settings?: Partial<VideoDanmakuSettings>): VideoDanmakuSettings => ({
+  ...defaultVideoDanmakuSettings,
+  ...settings,
+  enabled: settings?.enabled ?? defaultVideoDanmakuSettings.enabled,
 });
 
 export const sanitizeLiveDanmakuSpeechSettings = (

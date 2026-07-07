@@ -4,9 +4,11 @@ import {
   defaultLiveAudioLimitSettings,
   defaultLiveDanmakuSettings,
   defaultLiveDanmakuSpeechSettings,
+  defaultVideoDanmakuSettings,
   type LiveAudioLimitSettings,
   type LiveDanmakuSettings,
   type LiveDanmakuSpeechSettings,
+  type VideoDanmakuSettings,
 } from "@shared/live";
 
 export interface FullScreenPlayerSettingsState {
@@ -18,6 +20,7 @@ export interface FullScreenPlayerSettingsState {
   spectrumColor?: string;
   lyricsColor?: string;
   liveDanmaku: LiveDanmakuSettings;
+  videoDanmaku: VideoDanmakuSettings;
   liveDanmakuSpeech: LiveDanmakuSpeechSettings;
   liveAudioLimit: LiveAudioLimitSettings;
 }
@@ -36,6 +39,7 @@ const defaultSettings: FullScreenPlayerSettingsState = {
   spectrumColor: "currentColor",
   lyricsColor: "#ffffff",
   liveDanmaku: defaultLiveDanmakuSettings,
+  videoDanmaku: defaultVideoDanmakuSettings,
   liveDanmakuSpeech: defaultLiveDanmakuSpeechSettings,
   liveAudioLimit: defaultLiveAudioLimitSettings,
 };
@@ -58,6 +62,7 @@ export const useFullScreenPlayerSettings = create<FullScreenPlayerSettingsState 
         spectrumColor: state.spectrumColor,
         lyricsColor: state.lyricsColor,
         liveDanmaku: state.liveDanmaku,
+        videoDanmaku: state.videoDanmaku,
         liveDanmakuSpeech: state.liveDanmakuSpeech,
         liveAudioLimit: state.liveAudioLimit,
       }),

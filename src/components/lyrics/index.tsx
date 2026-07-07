@@ -6,14 +6,20 @@ import clsx from "classnames";
 import { debounce } from "es-toolkit";
 
 import type { LiveDanmakuLine } from "@/service/live-danmaku";
-import { defaultLiveDanmakuSettings } from "@shared/live";
 import type { WebPlayerParams } from "@/service/web-player";
 
 import { useFullScreenPlayerSettings } from "@/store/full-screen-player-settings";
 import { useLiveDanmaku, useLiveDanmakuConsumer } from "@/store/live-danmaku";
 import { usePlayList } from "@/store/play-list";
 import { usePlayProgress } from "@/store/play-progress";
+import { useVideoDanmaku } from "@/store/video-danmaku";
 import { StoreNameMap } from "@shared/store";
+import {
+  buildVideoDanmakuCues,
+  defaultLiveDanmakuSettings,
+  defaultVideoDanmakuSettings,
+  sanitizeVideoDanmakuSettings,
+} from "@shared/live";
 
 import IconButton from "../icon-button";
 import LyricsSearchModal from "../lyrics-search-modal";
@@ -24,6 +30,7 @@ import OffsetControl from "./offset-control";
 type LyricLine = {
   time: number; // milliseconds
   text: string;
+  count?: number;
 };
 
 type PlayItem = ReturnType<ReturnType<typeof usePlayList.getState>["getPlayItem"]>;
@@ -43,8 +50,15 @@ const Lyrics = ({ color, centered, showControls }: { color?: string; centered?: 
   const playId = usePlayList(s => s.playId);
   const playItem = usePlayList(s => s.list.find(item => item.id === s.playId));
   const liveDanmakuSettings = useFullScreenPlayerSettings(s => s.liveDanmaku || defaultLiveDanmakuSettings);
+  const videoDanmakuSettings = useFullScreenPlayerSettings(s =>
+    sanitizeVideoDanmakuSettings(s.videoDanmaku || defaultVideoDanmakuSettings),
+  );
   const sharedLiveLines = useLiveDanmaku(s => s.lines);
   const sharedLiveStatus = useLiveDanmaku(s => s.status);
+  const videoDanmakuLines = useVideoDanmaku(s => s.lines);
+  const videoDanmakuStatus = useVideoDanmaku(s => s.status);
+  const loadVideoDanmaku = useVideoDanmaku(s => s.load);
+  const clearVideoDanmaku = useVideoDanmaku(s => s.clear);
   const [lyrics, setLyrics] = useState<LyricLine[]>([]);
   const [translatedLyrics, setTranslatedLyrics] = useState<LyricLine[]>([]);
   const [offset, setOffset] = useState<number>(DEFAULT_OFFSET);
@@ -53,6 +67,9 @@ const Lyrics = ({ color, centered, showControls }: { color?: string; centered?: 
   const { currentTime } = usePlayProgress();
   const currentMs = currentTime * 1000 + offset;
   const isLiveLyrics = playItem?.type === "live" && Boolean(playItem.roomId);
+  const canUseVideoDanmaku = Boolean(
+    playItem?.type === "mv" && playItem.bvid && playItem.cid && videoDanmakuSettings.enabled,
+  );
   const liveLines = useMemo(
     () =>
       liveDanmakuSettings.enabled
@@ -65,6 +82,18 @@ const Lyrics = ({ color, centered, showControls }: { color?: string; centered?: 
     : sharedLiveStatus === "idle"
       ? "connecting"
       : sharedLiveStatus;
+  const videoDanmakuCues = useMemo(
+    () =>
+      canUseVideoDanmaku
+        ? buildVideoDanmakuCues({
+            lines: videoDanmakuLines,
+            blockedKeywords: liveDanmakuSettings.blockedKeywords,
+          })
+        : [],
+    [canUseVideoDanmaku, liveDanmakuSettings.blockedKeywords, videoDanmakuLines],
+  );
+  const displayLyrics = canUseVideoDanmaku && videoDanmakuCues.length ? videoDanmakuCues : lyrics;
+  const isVideoDanmakuLyrics = canUseVideoDanmaku && videoDanmakuCues.length > 0;
 
   const {
     isOpen: isSearchOpen,
@@ -199,6 +228,15 @@ const Lyrics = ({ color, centered, showControls }: { color?: string; centered?: 
     };
   }, [isLiveLyrics, parseLrc, playId, tryLoadCachedLyrics]);
 
+  useEffect(() => {
+    if (!canUseVideoDanmaku || !playItem?.bvid || !playItem.cid) {
+      clearVideoDanmaku();
+      return;
+    }
+
+    void loadVideoDanmaku({ bvid: playItem.bvid, cid: playItem.cid });
+  }, [canUseVideoDanmaku, clearVideoDanmaku, loadVideoDanmaku, playItem?.bvid, playItem?.cid]);
+
   useLiveDanmakuConsumer({
     roomId: playItem?.roomId || 0,
     consumerId: "lyrics",
@@ -216,12 +254,12 @@ const Lyrics = ({ color, centered, showControls }: { color?: string; centered?: 
 
   const activeIndex = useMemo(() => {
     if (isLiveLyrics) return liveLines.length - 1;
-    if (!lyrics.length) return -1;
-    for (let i = lyrics.length - 1; i >= 0; i -= 1) {
-      if (currentMs >= lyrics[i].time) return i;
+    if (!displayLyrics.length) return -1;
+    for (let i = displayLyrics.length - 1; i >= 0; i -= 1) {
+      if (currentMs >= displayLyrics[i].time) return i;
     }
     return 0;
-  }, [currentMs, isLiveLyrics, liveLines.length, lyrics]);
+  }, [currentMs, displayLyrics, isLiveLyrics, liveLines.length]);
 
   const persistLyricsCache = useMemo(
     () =>
@@ -323,7 +361,7 @@ const Lyrics = ({ color, centered, showControls }: { color?: string; centered?: 
 
   useEffect(() => {
     updateCenterPadding();
-  }, [updateCenterPadding, fontSize, isLiveLyrics, liveLines.length, lyrics.length]);
+  }, [updateCenterPadding, fontSize, isLiveLyrics, liveLines.length, displayLyrics.length]);
 
   useEffect(() => {
     return () => {
@@ -376,6 +414,7 @@ const Lyrics = ({ color, centered, showControls }: { color?: string; centered?: 
           style={{ color: color || undefined }}
         >
           {line.text}
+          {isVideoDanmakuLyrics && line.count && line.count > 1 ? ` x${line.count}` : ""}
         </div>
         {translation ? (
           <div className="mt-1 text-sm break-words whitespace-pre-wrap text-white/80">{translation}</div>
@@ -417,7 +456,10 @@ const Lyrics = ({ color, centered, showControls }: { color?: string; centered?: 
   };
 
   const renderEmptyText = () => {
-    if (!isLiveLyrics) return isLoading ? "歌词加载中..." : "暂无歌词";
+    if (!isLiveLyrics) {
+      if (canUseVideoDanmaku && videoDanmakuStatus === "loading") return "弹幕加载中...";
+      return isLoading ? "歌词加载中..." : "暂无歌词";
+    }
     if (liveStatus === "disabled") return "直播弹幕已关闭";
     if (liveStatus === "connecting") return "弹幕连接中...";
     if (liveStatus === "error") return "弹幕连接失败";
@@ -447,7 +489,7 @@ const Lyrics = ({ color, centered, showControls }: { color?: string; centered?: 
             >
               {liveLines.map((line, index) => renderLiveLine(line, index))}
             </div>
-          ) : !isLiveLyrics && lyrics.length ? (
+          ) : !isLiveLyrics && displayLyrics.length ? (
             <div
               className="space-y-2"
               style={{
@@ -455,7 +497,7 @@ const Lyrics = ({ color, centered, showControls }: { color?: string; centered?: 
                 paddingBottom: centerPadding,
               }}
             >
-              {lyrics.map((line, index) => renderLine(line, index))}
+              {displayLyrics.map((line, index) => renderLine(line, index))}
             </div>
           ) : (
             <div className="text-foreground/70 flex h-full items-center justify-center">{renderEmptyText()}</div>
